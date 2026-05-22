@@ -13,6 +13,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
+import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 // Providers that don't require credentials (noAuth)
 const NO_AUTH_PROVIDERS = new Set(["sdwebui", "comfyui"]);
@@ -56,7 +57,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId }),
+      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -64,10 +65,10 @@ export async function handleImageGeneration(request) {
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId });
+  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId } = {}) {
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -75,13 +76,29 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
 
   // noAuth providers — no credential needed
   if (NO_AUTH_PROVIDERS.has(provider)) {
+    const quota = await enforceQuota({ apiKey, provider });
+    if (!quota.allowed) {
+      log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
+      return quota.response;
+    }
+
     const result = await handleImageGenerationCore({
       body,
       modelInfo: { provider, model },
       credentials: null,
       binaryOutput,
     });
-    if (result.success) return result.response;
+    if (result.success) {
+      await recordSuccessfulUsage({
+        provider,
+        model,
+        apiKey,
+        endpoint,
+        cost: 0,
+        meta: { source: "image" },
+      });
+      return result.response;
+    }
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Image generation failed");
   }
 
@@ -106,6 +123,18 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
     }
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+    const quota = await enforceQuota({ apiKey, provider, connectionId: credentials.connectionId });
+    if (!quota.allowed) {
+      if (shouldFallbackForQuota(quota.violation)) {
+        log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
+        excludeConnectionIds.add(credentials.connectionId);
+        lastError = quota.violation?.rule?.description || "Provider account quota exceeded";
+        lastStatus = HTTP_STATUS.RATE_LIMITED;
+        continue;
+      }
+      log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
+      return quota.response;
+    }
 
     const result = await handleImageGenerationCore({
       body,
@@ -126,7 +155,18 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
       }
     });
 
-    if (result.success) return result.response;
+    if (result.success) {
+      await recordSuccessfulUsage({
+        provider,
+        model,
+        connectionId: credentials.connectionId,
+        apiKey,
+        endpoint,
+        cost: 0,
+        meta: { source: "image" },
+      });
+      return result.response;
+    }
 
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
 

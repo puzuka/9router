@@ -9,6 +9,7 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import * as log from "../utils/logger.js";
+import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 // Providers requiring credentials for STT
 const CREDENTIALED_PROVIDERS = new Set(
@@ -26,11 +27,12 @@ export async function handleStt(request) {
   }
 
   const modelStr = formData.get("model");
-  log.request("POST", `/v1/audio/transcriptions | ${modelStr}`);
+  const endpoint = new URL(request.url).pathname;
+  log.request("POST", `${endpoint} | ${modelStr}`);
 
+  const apiKey = extractApiKey(request);
   const settings = await getSettings();
   if (settings.requireApiKey) {
-    const apiKey = extractApiKey(request);
     if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     const valid = await isValidApiKey(apiKey);
     if (!valid) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
@@ -47,8 +49,24 @@ export async function handleStt(request) {
 
   // noAuth providers
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
+    const quota = await enforceQuota({ apiKey, provider });
+    if (!quota.allowed) {
+      log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
+      return quota.response;
+    }
+
     const result = await handleSttCore({ provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig });
-    if (result.success) return result.response;
+    if (result.success) {
+      await recordSuccessfulUsage({
+        provider,
+        model,
+        apiKey,
+        endpoint,
+        cost: 0,
+        meta: { source: "stt" },
+      });
+      return result.response;
+    }
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed");
   }
 
@@ -71,10 +89,33 @@ export async function handleStt(request) {
     }
 
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
+    const quota = await enforceQuota({ apiKey, provider, connectionId: credentials.connectionId });
+    if (!quota.allowed) {
+      if (shouldFallbackForQuota(quota.violation)) {
+        log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
+        excludeConnectionIds.add(credentials.connectionId);
+        lastError = quota.violation?.rule?.description || "Provider account quota exceeded";
+        lastStatus = HTTP_STATUS.RATE_LIMITED;
+        continue;
+      }
+      log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
+      return quota.response;
+    }
 
     const result = await handleSttCore({ provider, model, formData, credentials, sttConfig: AI_PROVIDERS[provider]?.sttConfig });
 
-    if (result.success) return result.response;
+    if (result.success) {
+      await recordSuccessfulUsage({
+        provider,
+        model,
+        connectionId: credentials.connectionId,
+        apiKey,
+        endpoint,
+        cost: 0,
+        meta: { source: "stt" },
+      });
+      return result.response;
+    }
 
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
     if (shouldFallback) {

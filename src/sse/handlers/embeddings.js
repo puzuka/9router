@@ -13,6 +13,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { saveRequestUsage } from "@/lib/usageDb.js";
+import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 function exactEmbeddingUsage(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw) || raw.estimated === true) return null;
@@ -116,6 +117,18 @@ export async function handleEmbeddings(request) {
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+    const quota = await enforceQuota({ apiKey, provider, connectionId: credentials.connectionId });
+    if (!quota.allowed) {
+      if (shouldFallbackForQuota(quota.violation)) {
+        log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
+        excludeConnectionIds.add(credentials.connectionId);
+        lastError = quota.violation?.rule?.description || "Provider account quota exceeded";
+        lastStatus = HTTP_STATUS.RATE_LIMITED;
+        continue;
+      }
+      log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
+      return quota.response;
+    }
 
     const result = await handleEmbeddingsCore({
       body: { ...body, model: `${provider}/${model}` },
@@ -147,6 +160,25 @@ export async function handleEmbeddings(request) {
           status: "success",
         }).catch(() => {});
       }
+      const usageAll = result.data?.usage || {};
+      const hasTokenUsage = [
+        usageAll.prompt_tokens,
+        usageAll.input_tokens,
+        usageAll.completion_tokens,
+        usageAll.output_tokens,
+        usageAll.total_tokens,
+        usageAll.totalTokenCount,
+      ].some((value) => Number(value) > 0);
+      await recordSuccessfulUsage({
+        provider,
+        model,
+        connectionId: credentials.connectionId,
+        apiKey,
+        endpoint: url.pathname,
+        usage: usageAll,
+        cost: hasTokenUsage ? undefined : 0,
+        meta: { source: "embeddings" },
+      });
       return result.response;
     }
 

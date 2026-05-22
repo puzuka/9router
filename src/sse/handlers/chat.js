@@ -24,6 +24,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { enforceQuota } from "../services/quota.js";
 
 /**
  * Handle chat completion request
@@ -265,6 +266,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+    const quota = await enforceQuota({ apiKey, provider, connectionId: credentials.connectionId });
+    if (!quota.allowed) {
+      if (quota.violation?.rule?.scopeType === "providerConnection") {
+        log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
+        excludeConnectionIds.add(credentials.connectionId);
+        lastError = quota.violation?.rule?.description || "Provider account quota exceeded";
+        lastStatus = HTTP_STATUS.RATE_LIMITED;
+        continue;
+      }
+      log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
+      return quota.response;
+    }
+
     const result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },

@@ -14,6 +14,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
 import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
+import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 /**
  * Handle web fetch (URL extraction) request for the SSE/Next.js server.
@@ -137,6 +138,12 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
   // No-auth fetch path (kept for parity though no current fetch provider sets noAuth)
   if (resolvedProvider.noAuth) {
     log.info("AUTH", `\x1b[32m${providerId} no-auth mode\x1b[0m`);
+    const quota = await enforceQuota({ apiKey, provider: providerId });
+    if (!quota.allowed) {
+      log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
+      return quota.response;
+    }
+
     const result = await handleFetchCore({
       url: targetUrl,
       format,
@@ -147,6 +154,14 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
       log
     });
     if (result.success) {
+      await recordSuccessfulUsage({
+        provider: providerId,
+        model: providerId,
+        apiKey,
+        endpoint: new URL(request.url).pathname,
+        usage: result.data?.usage,
+        meta: { source: "fetch" },
+      });
       return new Response(JSON.stringify(result.data), {
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
       });
@@ -185,6 +200,18 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
     log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
 
     const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
+    const quota = await enforceQuota({ apiKey, provider: providerId, connectionId: credentials.connectionId });
+    if (!quota.allowed) {
+      if (shouldFallbackForQuota(quota.violation)) {
+        log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
+        excludeConnectionIds.add(credentials.connectionId);
+        lastError = quota.violation?.rule?.description || "Provider account quota exceeded";
+        lastStatus = HTTP_STATUS.RATE_LIMITED;
+        continue;
+      }
+      log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
+      return quota.response;
+    }
 
     const result = await handleFetchCore({
       url: targetUrl,
@@ -206,6 +233,15 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
 
     if (result.success) {
       await clearAccountError(credentials.connectionId, credentials, fetchLockKey);
+      await recordSuccessfulUsage({
+        provider: providerId,
+        model: providerId,
+        connectionId: credentials.connectionId,
+        apiKey,
+        endpoint: new URL(request.url).pathname,
+        usage: result.data?.usage,
+        meta: { source: "fetch" },
+      });
       return new Response(JSON.stringify(result.data), {
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
       });
