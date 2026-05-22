@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
@@ -18,6 +19,7 @@ import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
 export default function APIPageClient({ machineId }) {
+  const router = useRouter();
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -1022,6 +1024,7 @@ export default function APIPageClient({ machineId }) {
                       onClick={() => toggleKeyVisibility(key.id)}
                       className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
                       title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
+                      aria-label={visibleKeys.has(key.id) ? `Hide ${key.name}` : `Show ${key.name}`}
                     >
                       <span className="material-symbols-outlined text-[14px]">
                         {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
@@ -1030,6 +1033,8 @@ export default function APIPageClient({ machineId }) {
                     <button
                       onClick={() => copy(key.key, key.id)}
                       className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                      title="Copy key"
+                      aria-label={`Copy ${key.name}`}
                     >
                       <span className="material-symbols-outlined text-[14px]">
                         {copied === key.id ? "check" : "content_copy"}
@@ -1063,6 +1068,14 @@ export default function APIPageClient({ machineId }) {
                     }}
                     title={key.isActive ? "Pause key" : "Resume key"}
                   />
+                  <button
+                    onClick={() => router.push(`/dashboard/endpoint/keys/${key.id}/usage`)}
+                    className="rounded bg-black/5 p-2 text-zinc-700 transition-colors hover:bg-primary/10 hover:text-primary dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-primary/20 dark:hover:text-primary"
+                    title="Open usage"
+                    aria-label={`Open usage for ${key.name}`}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">monitoring</span>
+                  </button>
                   <button
                     onClick={() => handleDeleteKey(key.id)}
                     className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"

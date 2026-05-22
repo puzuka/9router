@@ -437,10 +437,6 @@ export default function QuotaRulesManager() {
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <h2 className="text-xl font-semibold text-text-main">Quota Rules</h2>
-          <p className="mt-1 text-sm text-text-muted">Runtime enforcement, current usage, and reset windows.</p>
-        </div>
         <div className="flex gap-2">
           <Button variant="secondary" icon="refresh" onClick={fetchRules}>Refresh</Button>
           <Button icon="add" onClick={openCreate}>Create Rule</Button>

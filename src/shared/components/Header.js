@@ -99,10 +99,17 @@ const getPageInfo = (pathname) => {
       icon: "vpn_key",
       breadcrumbs: [],
     };
+  if (pathname.includes("/quota-rules"))
+    return {
+      title: "Quota Rules",
+      description: "Manage enforced runtime quota limits",
+      icon: "rule",
+      breadcrumbs: [],
+    };
   if (pathname.includes("/quota"))
     return {
       title: "Quota Tracker",
-      description: "Track and manage your API quota limits",
+      description: "Track provider account quotas and reset windows",
       icon: "data_usage",
       breadcrumbs: [],
     };

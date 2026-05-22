@@ -30,7 +30,8 @@ export default function UsageChart({ period = "7d" }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/usage/chart?period=${period}`);
+      const tzOffsetMinutes = new Date().getTimezoneOffset();
+      const res = await fetch(`/api/usage/chart?period=${period}&tzOffsetMinutes=${tzOffsetMinutes}`);
       if (res.ok) {
         const json = await res.json();
         setData(json);

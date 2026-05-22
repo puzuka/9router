@@ -11,6 +11,18 @@ const PERIOD_MS = {
   "30d": 30 * 24 * 60 * 60 * 1000,
 };
 
+function getTimezoneOffsetMinutes(options = {}) {
+  const value = Number(options.tzOffsetMinutes);
+  return Number.isFinite(value) ? value : new Date().getTimezoneOffset();
+}
+
+function getZonedDayStart(timestampMs, tzOffsetMinutes) {
+  const offsetMs = tzOffsetMinutes * 60 * 1000;
+  const shifted = timestampMs - offsetMs;
+  const shiftedDate = new Date(shifted);
+  return new Date(Date.UTC(shiftedDate.getUTCFullYear(), shiftedDate.getUTCMonth(), shiftedDate.getUTCDate()) + offsetMs);
+}
+
 function rowToRule(row) {
   if (!row) return null;
   return {
@@ -57,27 +69,21 @@ function normalizeRuleInput(input, existing = {}) {
   };
 }
 
-function getPeriodWindow(period, now = new Date()) {
-  if (period === "today") {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
-    return { start, end };
-  }
+function getPeriodWindow(period, now = new Date(), options = {}) {
+  const tzOffsetMinutes = getTimezoneOffsetMinutes(options);
+  const end = getZonedDayStart(now.getTime(), tzOffsetMinutes);
+  end.setUTCDate(end.getUTCDate() + 1);
 
-  const ms = PERIOD_MS[period];
-  return {
-    start: new Date(now.getTime() - ms),
-    end: null,
-    durationMs: ms,
-  };
+  const days = period === "7d" ? 7 : period === "30d" ? 30 : 1;
+  const start = new Date(end.getTime());
+  start.setUTCDate(start.getUTCDate() - days);
+  return { start, end, durationMs: PERIOD_MS[period] || PERIOD_MS["24h"] };
 }
 
-function buildUsageWhere(rule, apiKeyValue, now = new Date()) {
-  const { start } = getPeriodWindow(rule.period, now);
-  const where = ["timestamp >= ?"];
-  const params = [start.toISOString()];
+function buildUsageWhere(rule, apiKeyValue, now = new Date(), options = {}) {
+  const { start, end } = getPeriodWindow(rule.period, now, options);
+  const where = ["timestamp >= ?", "timestamp < ?"];
+  const params = [start.toISOString(), end.toISOString()];
 
   if (rule.scopeType === "apiKey") {
     if (!apiKeyValue) return null;
@@ -100,11 +106,8 @@ function usageMetricValue(row, metric) {
   return Number(row[metric] || 0);
 }
 
-function resetAtForPeriod(period, oldestTimestamp, now = new Date()) {
-  const window = getPeriodWindow(period, now);
-  if (period === "today") return window.end.toISOString();
-  if (!oldestTimestamp) return null;
-  return new Date(new Date(oldestTimestamp).getTime() + window.durationMs).toISOString();
+function resetAtForPeriod(period, now = new Date(), options = {}) {
+  return getPeriodWindow(period, now, options).end.toISOString();
 }
 
 async function getApiKeyValueForScope(rule) {
@@ -132,6 +135,7 @@ export async function listQuotaRules(options = {}) {
     const connection = connectionById.get(rule.scopeId);
     const usage = await getQuotaUsage(rule, {
       apiKeyValue: apiKey?.key || null,
+      tzOffsetMinutes: options.tzOffsetMinutes,
     });
 
     let scopeName = rule.scopeId;
@@ -211,7 +215,8 @@ export async function getQuotaUsage(rule, options = {}) {
   const normalizedRule = rowToRule(rule) || rule;
   const apiKeyValue = options.apiKeyValue ?? await getApiKeyValueForScope(normalizedRule);
   const db = await getAdapter();
-  const where = buildUsageWhere(normalizedRule, apiKeyValue, options.now || new Date());
+  const now = options.now || new Date();
+  const where = buildUsageWhere(normalizedRule, apiKeyValue, now, options);
   if (!where) {
     return {
       used: 0,
@@ -220,31 +225,37 @@ export async function getQuotaUsage(rule, options = {}) {
       completionTokens: 0,
       totalTokens: 0,
       cost: 0,
-      resetAt: resetAtForPeriod(normalizedRule.period, null, options.now || new Date()),
+      resetAt: resetAtForPeriod(normalizedRule.period, now, options),
     };
   }
 
-  const row = db.get(
-    `SELECT
-       COUNT(*) AS requests,
-       COALESCE(SUM(promptTokens), 0) AS promptTokens,
-       COALESCE(SUM(completionTokens), 0) AS completionTokens,
-       COALESCE(SUM(cost), 0) AS cost,
-       MIN(timestamp) AS oldestTimestamp
-     FROM usageHistory
-     WHERE ${where.where}`,
+  const rows = db.all(
+    `SELECT promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE ${where.where}`,
     where.params,
   );
 
-  const promptTokens = Number(row?.promptTokens || 0);
-  const completionTokens = Number(row?.completionTokens || 0);
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let totalTokens = 0;
+  let cost = 0;
+  for (const row of rows) {
+    const tokens = (() => { try { return row.tokens ? JSON.parse(row.tokens) : {}; } catch { return {}; } })();
+    const prompt = Number(row.promptTokens ?? tokens.prompt_tokens ?? tokens.input_tokens ?? 0) || 0;
+    const completion = Number(row.completionTokens ?? tokens.completion_tokens ?? tokens.output_tokens ?? 0) || 0;
+    const rawTotal = Number(tokens.total_tokens ?? tokens.totalTokenCount ?? 0) || 0;
+    promptTokens += prompt;
+    completionTokens += completion;
+    totalTokens += rawTotal > 0 ? rawTotal : prompt + completion;
+    cost += Number(row.cost || 0);
+  }
+
   const usage = {
-    requests: Number(row?.requests || 0),
+    requests: rows.length,
     promptTokens,
     completionTokens,
-    totalTokens: promptTokens + completionTokens,
-    cost: Number(row?.cost || 0),
-    resetAt: resetAtForPeriod(normalizedRule.period, row?.oldestTimestamp || null, options.now || new Date()),
+    totalTokens,
+    cost,
+    resetAt: resetAtForPeriod(normalizedRule.period, now, options),
   };
   usage.used = usageMetricValue(usage, normalizedRule.metric);
   return usage;
