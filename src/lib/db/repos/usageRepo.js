@@ -33,6 +33,22 @@ function getPeriodCutoffIso(period) {
   return null;
 }
 
+function getUsagePeriodWindow(period, tzOffsetMinutes = new Date().getTimezoneOffset()) {
+  const now = Date.now();
+  if (period === "today") {
+    const startMs = getZonedDayStartMs(now, tzOffsetMinutes);
+    return { startIso: new Date(startMs).toISOString(), endIso: new Date(now).toISOString() };
+  }
+  if (period === "24h") {
+    return { startIso: new Date(now - PERIOD_MS["24h"]).toISOString(), endIso: new Date(now).toISOString() };
+  }
+  const days = period === "7d" ? 7 : period === "30d" ? 30 : period === "60d" ? 60 : null;
+  if (!days) return { startIso: null, endIso: null };
+  const todayStartMs = getZonedDayStartMs(now, tzOffsetMinutes);
+  const startMs = todayStartMs - (days - 1) * 86400000;
+  return { startIso: new Date(startMs).toISOString(), endIso: new Date(now).toISOString() };
+}
+
 function mapRecentRequestRow(row) {
   const tokens = parseJson(row.tokens, {}) || {};
   const promptTokens = row.promptTokens ?? tokens.prompt_tokens ?? tokens.input_tokens ?? 0;
@@ -419,6 +435,27 @@ export async function getApiKeyRecentRequests(apiKey, period = "today", limit = 
     params
   );
   return rows.map(mapRecentRequestRow);
+}
+
+export async function getApiKeyUsageSummary(apiKey, period = "today", options = {}) {
+  if (!apiKey) return { totalRequests: 0, totalPromptTokens: 0, totalCompletionTokens: 0, totalCost: 0 };
+  const db = await getAdapter();
+  const { startIso, endIso } = getUsagePeriodWindow(period, options.tzOffsetMinutes);
+  const where = ["apiKey = ?"];
+  const params = [apiKey];
+  if (startIso) { where.push("timestamp >= ?"); params.push(startIso); }
+  if (endIso) { where.push("timestamp <= ?"); params.push(endIso); }
+
+  const row = db.get(
+    `SELECT COUNT(*) AS requests, COALESCE(SUM(promptTokens), 0) AS promptTokens, COALESCE(SUM(completionTokens), 0) AS completionTokens, COALESCE(SUM(cost), 0) AS cost FROM usageHistory WHERE ${where.join(" AND ")}`,
+    params
+  );
+  return {
+    totalRequests: Number(row?.requests || 0),
+    totalPromptTokens: Number(row?.promptTokens || 0),
+    totalCompletionTokens: Number(row?.completionTokens || 0),
+    totalCost: Number(row?.cost || 0),
+  };
 }
 
 function loadDaysInRange(adapter, maxDays) {

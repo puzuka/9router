@@ -75,7 +75,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
 
   // noAuth providers — no credential needed
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
-    const quota = await enforceQuota({ apiKey, provider });
+    const quota = await enforceQuota({ apiKey, provider, model });
     if (!quota.allowed) {
       log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
       return quota.response;
@@ -115,7 +115,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
     }
 
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
-    const quota = await enforceQuota({ apiKey, provider, connectionId: credentials.connectionId });
+    const quota = await enforceQuota({ apiKey, provider, model, connectionId: credentials.connectionId });
     if (!quota.allowed) {
       if (shouldFallbackForQuota(quota.violation)) {
         log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);

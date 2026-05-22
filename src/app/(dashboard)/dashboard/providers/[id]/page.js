@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/providerIcon";
-import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, XiaomiMimoAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
+import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, XiaomiMimoAuthModal, IFlowCookieModal, GitLabAuthModal, CodexJsonImportModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
@@ -46,6 +46,7 @@ export default function ProviderDetailPage() {
   const [proxyPools, setProxyPools] = useState([]);
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [showXiaomiMimoModal, setShowXiaomiMimoModal] = useState(false);
+  const [showCodexJsonImportModal, setShowCodexJsonImportModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
@@ -829,6 +830,11 @@ export default function ProviderDetailPage() {
   const handleIFlowCookieSuccess = () => {
     fetchConnections();
     setShowIFlowCookieModal(false);
+  };
+
+  const handleCodexJsonImportSuccess = () => {
+    fetchConnections();
+    setShowCodexJsonImportModal(false);
   };
 
   const handleSaveApiKey = async (formData) => {
@@ -1622,6 +1628,11 @@ export default function ProviderDetailPage() {
                         {translate("Bulk Add")}
                       </Button>
                     )}
+                    {providerId === "codex" && (
+                      <Button size="sm" icon="upload_file" variant="secondary" onClick={() => setShowCodexJsonImportModal(true)}>
+                        Import JSON
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       icon="add"
@@ -1701,6 +1712,17 @@ export default function ProviderDetailPage() {
                       className="w-full sm:w-auto"
                     >
                       {translate("Bulk Add")}
+                    </Button>
+                  )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      icon="upload_file"
+                      variant="secondary"
+                      onClick={() => setShowCodexJsonImportModal(true)}
+                      className="w-full sm:w-auto"
+                    >
+                      Import JSON
                     </Button>
                   )}
                   {hasDualAuthModes ? (
@@ -1856,6 +1878,13 @@ export default function ProviderDetailPage() {
         onSuccess={handleOAuthSuccess}
         onClose={() => setShowXiaomiMimoModal(false)}
       />
+      {providerId === "codex" && (
+        <CodexJsonImportModal
+          isOpen={showCodexJsonImportModal}
+          onSuccess={handleCodexJsonImportSuccess}
+          onClose={() => setShowCodexJsonImportModal(false)}
+        />
+      )}
       {providerId === "iflow" && (
         <IFlowCookieModal
           isOpen={showIFlowCookieModal}

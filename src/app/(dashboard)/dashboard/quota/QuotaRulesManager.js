@@ -26,7 +26,13 @@ const METRIC_OPTIONS = [
   { value: "cost", label: "Cost" },
 ];
 
-const EMPTY_TARGETS = { apiKeys: [], providers: [], providerConnections: [] };
+const MODEL_MODE_OPTIONS = [
+  { value: "all", label: "All models" },
+  { value: "include", label: "Only selected models" },
+  { value: "exclude", label: "All except selected models" },
+];
+
+const EMPTY_TARGETS = { apiKeys: [], providers: [], providerConnections: [], models: [] };
 
 function emptyForm() {
   return {
@@ -35,6 +41,7 @@ function emptyForm() {
     period: "24h",
     metric: "requests",
     limitValue: "100",
+    models: { mode: "all", include: [], exclude: [] },
     description: "",
     enabled: true,
   };
@@ -84,6 +91,35 @@ function getTargetOptions(scopeType, targets) {
   return (targets.providers || []).map((provider) => ({ value: provider.id, label: provider.name || provider.id }));
 }
 
+function getModelOptions(targets) {
+  return (targets.models || []).map((model) => ({ value: model.id, label: model.name || model.id }));
+}
+
+function getModelListForMode(models) {
+  if (models.mode === "include") return models.include || [];
+  if (models.mode === "exclude") return models.exclude || [];
+  return [];
+}
+
+function setModelListForMode(models, list) {
+  if (models.mode === "include") return { ...models, include: list };
+  if (models.mode === "exclude") return { ...models, exclude: list };
+  return models;
+}
+
+function toggleModel(models, model) {
+  const list = getModelListForMode(models);
+  const next = list.includes(model) ? list.filter((item) => item !== model) : [...list, model];
+  return setModelListForMode(models, next);
+}
+
+function summarizeModels(models) {
+  if (!models || models.mode === "all") return "All models";
+  const list = getModelListForMode(models);
+  if (models.mode === "include") return list.length ? `${list.length} selected` : "No models selected";
+  return list.length ? `All except ${list.length}` : "All models";
+}
+
 function normalizeForm(rule) {
   if (!rule) return emptyForm();
   return {
@@ -92,6 +128,11 @@ function normalizeForm(rule) {
     period: rule.period || "24h",
     metric: rule.metric || "requests",
     limitValue: String(rule.limitValue || ""),
+    models: {
+      mode: rule.models?.mode || "all",
+      include: Array.isArray(rule.models?.include) ? rule.models.include : [],
+      exclude: Array.isArray(rule.models?.exclude) ? rule.models.exclude : [],
+    },
     description: rule.description || "",
     enabled: rule.enabled !== false,
   };
@@ -104,6 +145,7 @@ function buildPayload(form) {
     period: form.period,
     metric: form.metric,
     limitValue: Number(form.limitValue),
+    models: form.models,
     description: form.description.trim(),
     enabled: form.enabled,
   };
@@ -154,8 +196,11 @@ function UsageBar({ rule }) {
 function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
   const [form, setForm] = useState(normalizeForm(rule));
   const targetOptions = useMemo(() => getTargetOptions(form.scopeType, targets), [form.scopeType, targets]);
+  const modelOptions = useMemo(() => getModelOptions(targets), [targets]);
   const isEdit = !!rule;
-  const canSave = form.scopeType === "global" || (form.scopeId && Number(form.limitValue) > 0);
+  const selectedModels = getModelListForMode(form.models);
+  const modelSelectionValid = form.models.mode !== "include" || selectedModels.length > 0;
+  const canSave = (form.scopeType === "global" || form.scopeId) && Number(form.limitValue) > 0 && modelSelectionValid;
 
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
   const setScopeType = (scopeType) => {
@@ -164,6 +209,9 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
       scopeType,
       scopeId: scopeType === "global" ? "global" : "",
     }));
+  };
+  const setModelMode = (mode) => {
+    setField("models", { ...form.models, mode });
   };
 
   const handleSave = () => {
@@ -240,6 +288,35 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
           onChange={(event) => setField("description", event.target.value)}
           placeholder="Team daily token cap"
         />
+        <div className="sm:col-span-2 rounded-lg border border-border bg-surface/60 p-3">
+          <Select
+            label="Models"
+            value={form.models.mode}
+            onChange={(event) => setModelMode(event.target.value)}
+            options={MODEL_MODE_OPTIONS}
+            placeholder="Select model mode"
+          />
+          {form.models.mode !== "all" && (
+            <div className="mt-3 max-h-56 overflow-y-auto rounded border border-border bg-bg p-2">
+              {modelOptions.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-text-muted">No model list available.</p>
+              ) : modelOptions.map((model) => (
+                <label key={model.value} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedModels.includes(model.value)}
+                    onChange={() => setField("models", toggleModel(form.models, model.value))}
+                    className="size-4 accent-primary"
+                  />
+                  <span className="truncate font-mono text-xs">{model.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <p className="mt-2 text-xs text-text-muted">
+            {form.models.mode === "include" ? "This rule only counts selected models." : form.models.mode === "exclude" ? "This rule counts all models except selected models." : "This rule counts every model."}
+          </p>
+        </div>
       </div>
     </Modal>
   );
@@ -257,6 +334,7 @@ function RuleRow({ rule, onEdit, onDelete, onToggle }) {
         </div>
         <p className="truncate text-sm font-semibold text-text-main">{rule.description || rule.scopeName || rule.scopeId}</p>
         <p className="truncate text-xs text-text-muted">{rule.scopeName || rule.scopeId}</p>
+        <p className="truncate text-xs text-text-muted">Models: {summarizeModels(rule.models)}</p>
       </div>
 
       <UsageBar rule={rule} />

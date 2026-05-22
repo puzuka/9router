@@ -117,7 +117,7 @@ export async function handleEmbeddings(request) {
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-    const quota = await enforceQuota({ apiKey, provider, connectionId: credentials.connectionId });
+    const quota = await enforceQuota({ apiKey, provider, model, connectionId: credentials.connectionId });
     if (!quota.allowed) {
       if (shouldFallbackForQuota(quota.violation)) {
         log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);

@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 
 export const QUOTA_SCOPE_TYPES = new Set(["global", "apiKey", "provider", "providerConnection"]);
 export const QUOTA_PERIODS = new Set(["today", "24h", "7d", "30d"]);
@@ -33,10 +34,39 @@ function rowToRule(row) {
     metric: row.metric,
     limitValue: Number(row.limitValue),
     enabled: row.enabled === 1 || row.enabled === true,
+    models: normalizeModelFilter(parseJson(row.models, { mode: "all", include: [], exclude: [] })),
     description: row.description || "",
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function normalizeModelId(model) {
+  return String(model || "").trim();
+}
+
+function normalizeModelList(value) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map(normalizeModelId)
+    .filter(Boolean))];
+}
+
+function normalizeModelFilter(value = {}) {
+  const mode = value.mode === "include" || value.mode === "exclude" ? value.mode : "all";
+  return {
+    mode,
+    include: normalizeModelList(value.include),
+    exclude: normalizeModelList(value.exclude),
+  };
+}
+
+function modelMatchesRule(rule, model) {
+  const filter = normalizeModelFilter(rule.models);
+  if (filter.mode === "all") return true;
+  const normalizedModel = normalizeModelId(model);
+  if (!normalizedModel) return false;
+  if (filter.mode === "include") return filter.include.includes(normalizedModel);
+  return !filter.exclude.includes(normalizedModel);
 }
 
 function normalizeScopeId(scopeType, scopeId) {
@@ -64,6 +94,7 @@ function normalizeRuleInput(input, existing = {}) {
     period,
     metric,
     limitValue,
+    models: normalizeModelFilter(next.models),
     enabled: next.enabled === undefined ? true : !!next.enabled,
     description: String(next.description || "").trim(),
   };
@@ -97,12 +128,21 @@ function buildUsageWhere(rule, apiKeyValue, now = new Date(), options = {}) {
     params.push(rule.scopeId);
   }
 
+  const filter = normalizeModelFilter(rule.models);
+  if (filter.mode === "include") {
+    if (filter.include.length === 0) return null;
+    where.push(`model IN (${filter.include.map(() => "?").join(", ")})`);
+    params.push(...filter.include);
+  } else if (filter.mode === "exclude" && filter.exclude.length > 0) {
+    where.push(`(model IS NULL OR model NOT IN (${filter.exclude.map(() => "?").join(", ")}))`);
+    params.push(...filter.exclude);
+  }
+
   return { where: where.join(" AND "), params };
 }
 
 function usageMetricValue(row, metric) {
   if (!row) return 0;
-  if (metric === "totalTokens") return Number(row.promptTokens || 0) + Number(row.completionTokens || 0);
   return Number(row[metric] || 0);
 }
 
@@ -172,11 +212,11 @@ export async function createQuotaRule(input) {
   };
 
   db.run(
-    `INSERT INTO quotaRules(id, scopeType, scopeId, period, metric, limitValue, enabled, description, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO quotaRules(id, scopeType, scopeId, period, metric, limitValue, enabled, models, description, createdAt, updatedAt)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       rule.id, rule.scopeType, rule.scopeId, rule.period, rule.metric,
-      rule.limitValue, rule.enabled ? 1 : 0, rule.description,
+      rule.limitValue, rule.enabled ? 1 : 0, stringifyJson(rule.models), rule.description,
       rule.createdAt, rule.updatedAt,
     ],
   );
@@ -193,11 +233,11 @@ export async function updateQuotaRule(id, input) {
 
   db.run(
     `UPDATE quotaRules
-     SET scopeType = ?, scopeId = ?, period = ?, metric = ?, limitValue = ?, enabled = ?, description = ?, updatedAt = ?
+     SET scopeType = ?, scopeId = ?, period = ?, metric = ?, limitValue = ?, enabled = ?, models = ?, description = ?, updatedAt = ?
      WHERE id = ?`,
     [
       updated.scopeType, updated.scopeId, updated.period, updated.metric,
-      updated.limitValue, updated.enabled ? 1 : 0, updated.description,
+      updated.limitValue, updated.enabled ? 1 : 0, stringifyJson(updated.models), updated.description,
       updated.updatedAt, id,
     ],
   );
@@ -262,15 +302,21 @@ export async function getQuotaUsage(rule, options = {}) {
 }
 
 export async function getQuotaTargets() {
-  const [apiKeys, connections] = await Promise.all([
+  const [apiKeys, connections, pricing] = await Promise.all([
     import("./apiKeysRepo.js").then((m) => m.getApiKeys()).catch(() => []),
     import("./connectionsRepo.js").then((m) => m.getProviderConnections()).catch(() => []),
+    import("./pricingRepo.js").then((m) => m.getPricing()).catch(() => ({})),
   ]);
   const providers = [...new Set(connections.map((conn) => conn.provider).filter(Boolean))].sort();
+  const modelSet = new Set();
+  for (const [provider, models] of Object.entries(pricing || {})) {
+    for (const model of Object.keys(models || {})) modelSet.add(model);
+  }
 
   return {
     apiKeys: apiKeys.map((key) => ({ id: key.id, name: key.name || key.id, isActive: key.isActive })),
     providers: providers.map((id) => ({ id, name: id })),
+    models: [...modelSet].sort().map((id) => ({ id, name: id })),
     providerConnections: connections.map((conn) => ({
       id: conn.id,
       provider: conn.provider,
@@ -305,6 +351,7 @@ export async function checkQuota(context = {}) {
 
   for (const row of rows) {
     const rule = rowToRule(row);
+    if (!modelMatchesRule(rule, context.model)) continue;
     const usage = await getQuotaUsage(rule, {
       apiKeyValue: rule.scopeType === "apiKey" ? context.apiKey : null,
     });

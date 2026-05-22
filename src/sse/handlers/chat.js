@@ -266,7 +266,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
-    const quota = await enforceQuota({ apiKey, provider, connectionId: credentials.connectionId });
+    const quota = await enforceQuota({ apiKey, provider, model, connectionId: credentials.connectionId });
     if (!quota.allowed) {
       if (quota.violation?.rule?.scopeType === "providerConnection") {
         log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);

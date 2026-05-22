@@ -135,6 +135,25 @@ export const TABLES = {
       data: "TEXT NOT NULL",
     },
   },
+  quotaRules: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      scopeType: "TEXT NOT NULL",
+      scopeId: "TEXT NOT NULL",
+      period: "TEXT NOT NULL",
+      metric: "TEXT NOT NULL",
+      limitValue: "REAL NOT NULL",
+      enabled: "INTEGER DEFAULT 1",
+      models: "TEXT",
+      description: "TEXT",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_qr_enabled_scope ON quotaRules(enabled, scopeType, scopeId)",
+      "CREATE INDEX IF NOT EXISTS idx_qr_scope ON quotaRules(scopeType, scopeId)",
+    ],
+  },
   requestDetails: {
     columns: {
       id: "TEXT PRIMARY KEY",

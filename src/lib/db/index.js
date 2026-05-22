@@ -65,7 +65,7 @@ export {
 export {
   statsEmitter, trackPendingRequest, getActiveRequests,
   saveRequestUsage, getUsageHistory, getUsageStats, getChartData,
-  getApiKeyRecentRequests, appendRequestLog, getRecentLogs,
+  getApiKeyRecentRequests, getApiKeyUsageSummary, appendRequestLog, getRecentLogs,
 } from "./repos/usageRepo.js";
 
 // Request details
@@ -84,7 +84,7 @@ export async function exportDb() {
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
-    quotaRules: db.all(`SELECT * FROM quotaRules`).map((r) => ({ id: r.id, scopeType: r.scopeType, scopeId: r.scopeId, period: r.period, metric: r.metric, limitValue: r.limitValue, enabled: r.enabled === 1, description: r.description || "", createdAt: r.createdAt, updatedAt: r.updatedAt })),
+    quotaRules: db.all(`SELECT * FROM quotaRules`).map((r) => ({ id: r.id, scopeType: r.scopeType, scopeId: r.scopeId, period: r.period, metric: r.metric, limitValue: r.limitValue, enabled: r.enabled === 1, models: parseJson(r.models, { mode: "all", include: [], exclude: [] }), description: r.description || "", createdAt: r.createdAt, updatedAt: r.updatedAt })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -151,10 +151,10 @@ export async function importDb(payload) {
     }
     for (const r of payload.quotaRules || []) {
       db.run(
-        `INSERT OR REPLACE INTO quotaRules(id, scopeType, scopeId, period, metric, limitValue, enabled, description, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO quotaRules(id, scopeType, scopeId, period, metric, limitValue, enabled, models, description, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           r.id, r.scopeType, r.scopeId, r.period, r.metric, Number(r.limitValue) || 0,
-          r.enabled === false ? 0 : 1, r.description || null,
+          r.enabled === false ? 0 : 1, stringifyJson(r.models || { mode: "all", include: [], exclude: [] }), r.description || null,
           r.createdAt || new Date().toISOString(), r.updatedAt || new Date().toISOString(),
         ]
       );

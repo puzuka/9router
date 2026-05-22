@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getApiKeyById } from "@/lib/localDb";
 import { listQuotaRules } from "@/lib/localDb";
-import { getApiKeyRecentRequests, getChartData, getUsageStats } from "@/lib/usageDb";
+import { getApiKeyRecentRequests, getApiKeyUsageSummary, getChartData, getUsageStats } from "@/lib/usageDb";
 
 const PERIOD_ALIASES = { "7day": "7d", "30day": "30d" };
 const VALID_PERIODS = new Set(["today", "24h", "7d", "30d"]);
@@ -23,12 +23,14 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: "Invalid period" }, { status: 400 });
     }
 
-    const [stats, chart, requests, quotaRules] = await Promise.all([
+    const [stats, summary, chart, requests, quotaRules] = await Promise.all([
       getUsageStats({ period, apiKey: key.key }),
+      getApiKeyUsageSummary(key.key, period, { tzOffsetMinutes }),
       getChartData({ period, apiKey: key.key, tzOffsetMinutes }),
       getApiKeyRecentRequests(key.key, period, 20),
       listQuotaRules({ includeUsage: true, tzOffsetMinutes }),
     ]);
+    Object.assign(stats, summary);
 
     const quotas = quotaRules
       .filter((rule) => rule.enabled && rule.scopeType === "apiKey" && rule.scopeId === key.id && ["promptTokens", "completionTokens", "totalTokens", "cost"].includes(rule.metric))
