@@ -47,12 +47,13 @@ async function tryNodeSqlite() {
 }
 
 async function trySqlJs() {
+  if (process.env.NINEROUTER_ENABLE_SQLJS_FALLBACK !== "1") return null;
   try {
     const { createSqlJsAdapter } = await import("./adapters/sqljsAdapter.js");
     return await createSqlJsAdapter(DATA_FILE);
   } catch (e) {
     console.warn(`[DB] sql.js unavailable: ${e.message}`);
-    return null;
+    throw e;
   }
 }
 
@@ -65,7 +66,9 @@ async function initAdapter() {
   if (!adapter) adapter = await tryBetterSqlite();
   if (!adapter) adapter = await tryNodeSqlite();
   if (!adapter) adapter = await trySqlJs();
-  if (!adapter) throw new Error("[DB] No SQLite driver available (bun/better/node/sql.js all failed)");
+  if (!adapter) {
+    throw new Error("[DB] No safe SQLite driver available (bun/better/node failed; set NINEROUTER_ENABLE_SQLJS_FALLBACK=1 to opt into sql.js)");
+  }
 
   if (!state.logged) {
     console.log(`[DB] Driver: ${adapter.driver} | file: ${DATA_FILE}`);
