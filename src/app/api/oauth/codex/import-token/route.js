@@ -7,11 +7,13 @@ import { extractCodexAccountInfo } from "@/lib/oauth/providers";
  * Import a ChatGPT access token (created from chatgpt.com settings)
  * as a provider connection, bypassing OAuth refresh flow.
  *
- * Body: { accessToken: string, name?: string }
+ * Body: { accessToken: string, name?: string } or exported connection JSON
  */
 export async function POST(request) {
   try {
-    const { accessToken, name } = await request.json();
+    const body = await request.json();
+    const accessToken = body?.accessToken;
+    const name = body?.name;
 
     if (!accessToken || typeof accessToken !== "string") {
       return NextResponse.json(
@@ -23,8 +25,11 @@ export async function POST(request) {
     const token = accessToken.trim();
 
     // Extract account info from the JWT (email, workspace, plan)
-    let email = null;
-    let providerSpecificData = { authMethod: "access_token" };
+    let email = typeof body?.email === "string" ? body.email.trim() || null : null;
+    let providerSpecificData = {
+      ...(body?.providerSpecificData && typeof body.providerSpecificData === "object" ? body.providerSpecificData : {}),
+      authMethod: "access_token",
+    };
 
     // Try decoding as JWT to extract email + workspace
     try {
@@ -66,6 +71,9 @@ export async function POST(request) {
     }
 
     const connectionName = name || email || "ChatGPT Access Token";
+    const expiresAt = typeof body?.expiresAt === "string" ? body.expiresAt : undefined;
+    const expiresIn = Number.isFinite(Number(body?.expiresIn)) ? Number(body.expiresIn) : undefined;
+    const priority = Number.isFinite(Number(body?.priority)) ? Number(body.priority) : undefined;
 
     // Save to database as access_token authType (no refresh token)
     const connection = await createProviderConnection({
@@ -74,8 +82,12 @@ export async function POST(request) {
       accessToken: token,
       name: connectionName,
       email: email,
+      priority,
+      expiresAt,
+      expiresIn,
       providerSpecificData,
-      testStatus: "active",
+      testStatus: body?.testStatus || "active",
+      isActive: body?.isActive !== false,
     });
 
     return NextResponse.json({

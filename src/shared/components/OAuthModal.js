@@ -131,6 +131,34 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     }
   }, [authData]);
 
+  const importCodexToken = useCallback(async (input) => {
+    try {
+      const trimmed = input.trim();
+      if (!trimmed) throw new Error("Paste a Codex token JSON or access token");
+
+      let payload;
+      if (trimmed.startsWith("{")) {
+        payload = JSON.parse(trimmed);
+      } else {
+        payload = { accessToken: trimmed };
+      }
+
+      const res = await fetch("/api/oauth/codex/import-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to import Codex token");
+
+      setStep("success");
+      onSuccess?.();
+    } catch (err) {
+      setError(err.message);
+      setStep("error");
+    }
+  }, [onSuccess]);
+
   // Poll for device code token
   const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData, deadlineMs) => {
     pollingAbortRef.current = false;
@@ -687,6 +715,12 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         return;
       }
 
+      // Codex: accept exported token JSON or a raw access token
+      if (provider === "codex" && (input.startsWith("{") || (input.startsWith("eyJ") && input.includes(".")))) {
+        await importCodexToken(input);
+        return;
+      }
+
       // Detect raw JWT access token (starts with eyJ) — skip URL parsing
       if (input.startsWith("eyJ") && input.includes(".")) {
         await exchangeTokens(input, null);
@@ -743,10 +777,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const isKimchiProvider = provider === "kimchi";
   const deviceLoginUrl = deviceData?.verification_uri_complete || deviceData?.verification_uri || "";
   const modalTitle = isXaiProvider ? "Connect Grok Build OAuth" : `Connect ${providerInfo.name}`;
+  const isCodexProvider = provider === "codex";
   const manualPlaceholder = isXaiProvider
     ? "http://127.0.0.1:56121/callback?code=... or copied code"
     : isKimchiProvider
       ? `${placeholderUrl.replace("code=...", "token=...")} or copied token`
+    : isCodexProvider
+      ? '{ "accessToken": "eyJ...", "expiresAt": "2026-06-01T17:16:09.000Z", "provider": "codex" }'
       : placeholderUrl;
 
   return (
@@ -862,14 +899,16 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
               <div>
                 <p className="text-sm font-medium mb-2">
-                  Step 2: Paste the {provider === "xai" ? "callback URL or copied code" : isKimchiProvider ? "callback URL or copied token" : "callback URL"} here
+                  Step 2: Paste the {provider === "xai" ? "callback URL or copied code" : isKimchiProvider ? "callback URL or copied token" : provider === "codex" ? "callback URL, token JSON, or access token" : "callback URL"} here
                 </p>
                 <p className="text-xs text-text-muted mb-2">
                   {provider === "xai"
                     ? "If xAI shows a code instead of redirecting, paste that code here."
                     : isKimchiProvider
                       ? "After authorization, copy the full callback URL or token from your browser."
-                    : "After authorization, copy the full URL from your browser."}
+                    : provider === "codex"
+                      ? "After authorization, copy the full URL from your browser, or paste an exported Codex JSON object."
+                      : "After authorization, copy the full URL from your browser."}
                 </p>
                 <Input
                   value={callbackUrl}

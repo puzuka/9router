@@ -74,7 +74,7 @@ export default function Sidebar({ onClose }) {
     if (href === "/dashboard/endpoint") {
       return pathname === "/dashboard" || pathname.startsWith("/dashboard/endpoint");
     }
-    return pathname.startsWith(href);
+    return pathname === href || pathname.startsWith(`${href}/`);
   };
 
   // Open manual update panel (no countdown yet — user must click Copy to trigger shutdown)
