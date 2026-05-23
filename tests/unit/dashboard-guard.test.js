@@ -214,6 +214,20 @@ describe("dashboard guard public LLM API access", () => {
     expect(response).toBe(mocks.nextResponse);
     expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
   });
+
+  it("allows public quota check API without dashboard auth", async () => {
+    const response = await proxy(request("/api/check-quota", { host: "router.example.com" }));
+
+    expect(response).toBe(mocks.nextResponse);
+    expect(mocks.validateApiKey).not.toHaveBeenCalled();
+  });
+
+  it("allows public quota check page without dashboard auth", async () => {
+    const response = await proxy(request("/check-quota", { host: "router.example.com" }));
+
+    expect(response).toBe(mocks.nextResponse);
+    expect(mocks.verifyDashboardAuthToken).not.toHaveBeenCalled();
+  });
 });
 
 describe("dashboard guard local-only access", () => {

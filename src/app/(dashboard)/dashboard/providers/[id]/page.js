@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/providerIcon";
-import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, XiaomiMimoAuthModal, IFlowCookieModal, GitLabAuthModal, CodexJsonImportModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
+import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, XiaomiMimoAuthModal, IFlowCookieModal, GitLabAuthModal, CodexJsonImportModal, CodexSessionImportModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
@@ -23,6 +23,7 @@ import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
+import ProviderUsagePanel from "./ProviderUsagePanel";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -47,6 +48,7 @@ export default function ProviderDetailPage() {
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [showXiaomiMimoModal, setShowXiaomiMimoModal] = useState(false);
   const [showCodexJsonImportModal, setShowCodexJsonImportModal] = useState(false);
+  const [showCodexSessionImportModal, setShowCodexSessionImportModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
@@ -837,6 +839,10 @@ export default function ProviderDetailPage() {
     setShowCodexJsonImportModal(false);
   };
 
+  const handleCodexSessionImportSuccess = () => {
+    fetchConnections();
+  };
+
   const handleSaveApiKey = async (formData) => {
     setAddConnectionError("");
     try {
@@ -922,8 +928,13 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const selectedConnections = connections.filter((conn) => selectedConnectionIds.includes(conn.id));
-  const allSelected = connections.length > 0 && selectedConnectionIds.length === connections.length;
+  const validSelectedConnectionIds = useMemo(() => {
+    const connectionIdSet = new Set(connections.map((conn) => conn.id));
+    return selectedConnectionIds.filter((id) => connectionIdSet.has(id));
+  }, [connections, selectedConnectionIds]);
+
+  const selectedConnections = connections.filter((conn) => validSelectedConnectionIds.includes(conn.id));
+  const allSelected = connections.length > 0 && validSelectedConnectionIds.length === connections.length;
 
   const toggleSelectConnection = (connectionId) => {
     setSelectedConnectionIds((prev) => (
@@ -945,10 +956,6 @@ export default function ProviderDetailPage() {
     setSelectedConnectionIds([]);
     setBulkProxyPoolId("__none__");
   };
-
-  useEffect(() => {
-    setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id)));
-  }, [connections]);
 
   const selectedProxySummary = (() => {
     if (selectedConnections.length === 0) return "";
@@ -1018,7 +1025,7 @@ export default function ProviderDetailPage() {
   };
 
 
-  const isSelected = (connectionId) => selectedConnectionIds.includes(connectionId);
+  const isSelected = (connectionId) => validSelectedConnectionIds.includes(connectionId);
 
   const connectionsList = (
     <div className="flex min-w-0 flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03] max-h-[500px] overflow-y-auto pr-1">
@@ -1449,6 +1456,12 @@ export default function ProviderDetailPage() {
         </div>
       )}
 
+      <ProviderUsagePanel
+        key={providerId}
+        providerId={providerId}
+        providerInfo={providerInfo}
+      />
+
       {isCompatible && providerNode && (
         <Card>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1601,7 +1614,7 @@ export default function ProviderDetailPage() {
                   )}
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {hasDualAuthModes ? (
                   <>
                     <Button size="sm" icon="lock" variant="secondary" onClick={triggerOAuthConnection}>
@@ -1631,6 +1644,11 @@ export default function ProviderDetailPage() {
                     {providerId === "codex" && (
                       <Button size="sm" icon="upload_file" variant="secondary" onClick={() => setShowCodexJsonImportModal(true)}>
                         Import JSON
+                      </Button>
+                    )}
+                    {providerId === "codex" && (
+                      <Button size="sm" icon="login" variant="secondary" onClick={() => setShowCodexSessionImportModal(true)}>
+                        Import Session
                       </Button>
                     )}
                     <Button
@@ -1723,6 +1741,18 @@ export default function ProviderDetailPage() {
                       className="w-full sm:w-auto"
                     >
                       Import JSON
+                    </Button>
+                  )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      icon="login"
+                      variant="secondary"
+                      onClick={() => setShowCodexSessionImportModal(true)}
+                      title="Import from ChatGPT session"
+                      className="w-full sm:w-auto"
+                    >
+                      Import Session
                     </Button>
                   )}
                   {hasDualAuthModes ? (
@@ -1883,6 +1913,13 @@ export default function ProviderDetailPage() {
           isOpen={showCodexJsonImportModal}
           onSuccess={handleCodexJsonImportSuccess}
           onClose={() => setShowCodexJsonImportModal(false)}
+        />
+      )}
+      {providerId === "codex" && (
+        <CodexSessionImportModal
+          isOpen={showCodexSessionImportModal}
+          onSuccess={handleCodexSessionImportSuccess}
+          onClose={() => setShowCodexSessionImportModal(false)}
         />
       )}
       {providerId === "iflow" && (

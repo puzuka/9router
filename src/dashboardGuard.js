@@ -21,6 +21,7 @@ async function hasValidCliToken(request) {
 
 // Public API paths — no auth required (LLM API has its own key auth inside handler).
 const PUBLIC_API_PATHS = [
+  "/api/check-quota",
   "/api/health",
   "/api/init",
   "/api/locale",
@@ -268,6 +269,11 @@ export async function proxy(request) {
     }
 
     return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // Allow public access to check-quota page
+  if (pathname === "/check-quota") {
+    return NextResponse.next();
   }
 
   // Redirect / to /dashboard if logged in, or /dashboard if it's the root

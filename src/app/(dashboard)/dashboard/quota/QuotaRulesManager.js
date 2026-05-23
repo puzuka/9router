@@ -92,7 +92,11 @@ function getTargetOptions(scopeType, targets) {
 }
 
 function getModelOptions(targets) {
-  return (targets.models || []).map((model) => ({ value: model.id, label: model.name || model.id }));
+  return (targets.models || []).map((model) => ({
+    value: model.id,
+    label: model.name || model.id,
+    providers: Array.isArray(model.providers) ? model.providers : [],
+  }));
 }
 
 function getModelListForMode(models) {
@@ -118,6 +122,50 @@ function summarizeModels(models) {
   const list = getModelListForMode(models);
   if (models.mode === "include") return list.length ? `${list.length} selected` : "No models selected";
   return list.length ? `All except ${list.length}` : "All models";
+}
+
+function SelectedModelChips({ models, modelOptionMap, limit = Infinity, onRemove, className = "" }) {
+  const selected = getModelListForMode(models);
+  if (selected.length === 0) return null;
+
+  const visible = selected.slice(0, limit);
+  const hiddenCount = selected.length - visible.length;
+
+  return (
+    <div className={`flex min-w-0 flex-wrap gap-1.5 ${className}`}>
+      {visible.map((model) => {
+        const option = modelOptionMap?.get(model);
+        const label = option?.label && option.label !== model ? option.label : "";
+        const providerText = option?.providers?.length ? option.providers.join(", ") : "";
+        const title = [model, label, providerText].filter(Boolean).join(" / ");
+
+        return (
+          <span
+            key={model}
+            title={title}
+            className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2 py-1 text-[11px] text-text-main"
+          >
+            <span className="max-w-[180px] truncate font-mono">{model}</span>
+            {onRemove && (
+              <button
+                type="button"
+                onClick={() => onRemove(model)}
+                aria-label={`Remove ${model}`}
+                className="-mr-1 flex size-4 items-center justify-center rounded-full text-text-muted hover:bg-surface hover:text-text-main"
+              >
+                <span className="material-symbols-outlined text-[13px]">close</span>
+              </button>
+            )}
+          </span>
+        );
+      })}
+      {hiddenCount > 0 && (
+        <span className="inline-flex items-center rounded-full border border-border bg-surface-2 px-2 py-1 text-[11px] font-medium text-text-muted">
+          +{hiddenCount}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function normalizeForm(rule) {
@@ -195,10 +243,21 @@ function UsageBar({ rule }) {
 
 function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
   const [form, setForm] = useState(normalizeForm(rule));
+  const [modelSearch, setModelSearch] = useState("");
   const targetOptions = useMemo(() => getTargetOptions(form.scopeType, targets), [form.scopeType, targets]);
   const modelOptions = useMemo(() => getModelOptions(targets), [targets]);
+  const modelOptionMap = useMemo(() => new Map(modelOptions.map((model) => [model.value, model])), [modelOptions]);
+  const filteredModelOptions = useMemo(() => {
+    const query = modelSearch.trim().toLowerCase();
+    if (!query) return modelOptions;
+    return modelOptions.filter((model) => {
+      const providerText = model.providers.join(" ");
+      return `${model.value} ${model.label} ${providerText}`.toLowerCase().includes(query);
+    });
+  }, [modelOptions, modelSearch]);
   const isEdit = !!rule;
   const selectedModels = getModelListForMode(form.models);
+  const selectedModelSet = useMemo(() => new Set(selectedModels), [selectedModels]);
   const modelSelectionValid = form.models.mode !== "include" || selectedModels.length > 0;
   const canSave = (form.scopeType === "global" || form.scopeId) && Number(form.limitValue) > 0 && modelSelectionValid;
 
@@ -212,6 +271,16 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
   };
   const setModelMode = (mode) => {
     setField("models", { ...form.models, mode });
+    setModelSearch("");
+  };
+  const setSelectedModels = (list) => {
+    setField("models", setModelListForMode(form.models, [...new Set(list)]));
+  };
+  const selectVisibleModels = () => {
+    setSelectedModels([...selectedModels, ...filteredModelOptions.map((model) => model.value)]);
+  };
+  const clearSelectedModels = () => {
+    setSelectedModels([]);
   };
 
   const handleSave = () => {
@@ -297,20 +366,75 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
             placeholder="Select model mode"
           />
           {form.models.mode !== "all" && (
-            <div className="mt-3 max-h-56 overflow-y-auto rounded border border-border bg-bg p-2">
-              {modelOptions.length === 0 ? (
-                <p className="px-2 py-3 text-sm text-text-muted">No model list available.</p>
-              ) : modelOptions.map((model) => (
-                <label key={model.value} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedModels.includes(model.value)}
-                    onChange={() => setField("models", toggleModel(form.models, model.value))}
-                    className="size-4 accent-primary"
-                  />
-                  <span className="truncate font-mono text-xs">{model.label}</span>
-                </label>
-              ))}
+            <div className="mt-3 rounded border border-border bg-bg">
+              <div className="border-b border-border-subtle p-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="relative min-w-0 flex-1">
+                    <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[16px] text-text-muted">search</span>
+                    <input
+                      type="search"
+                      value={modelSearch}
+                      onChange={(event) => setModelSearch(event.target.value)}
+                      placeholder="Search model id, name, or provider"
+                      className="w-full rounded-[8px] border border-transparent bg-surface-2 py-2 pl-8 pr-3 text-[16px] text-text-main placeholder-text-muted/70 focus:border-brand-500/40 focus:outline-none focus:ring-2 focus:ring-brand-500/30 sm:text-sm"
+                    />
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={selectVisibleModels}
+                      disabled={filteredModelOptions.length === 0}
+                      className="rounded-[8px] px-2.5 py-2 text-xs font-medium text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Select visible
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearSelectedModels}
+                      disabled={selectedModels.length === 0}
+                      className="rounded-[8px] px-2.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-2 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-text-muted">
+                  {selectedModels.length} selected / {filteredModelOptions.length} shown / {modelOptions.length} available
+                </p>
+                <SelectedModelChips
+                  models={form.models}
+                  modelOptionMap={modelOptionMap}
+                  onRemove={(model) => setField("models", toggleModel(form.models, model))}
+                  className="mt-2 max-h-20 overflow-y-auto pr-1"
+                />
+              </div>
+              <div className="max-h-56 overflow-y-auto p-2">
+                {modelOptions.length === 0 ? (
+                  <p className="px-2 py-3 text-sm text-text-muted">No model list available.</p>
+                ) : filteredModelOptions.length === 0 ? (
+                  <p className="px-2 py-3 text-sm text-text-muted">No models match this search.</p>
+                ) : filteredModelOptions.map((model) => {
+                  const providerText = model.providers.length ? model.providers.join(", ") : "";
+                  return (
+                    <label key={model.value} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedModelSet.has(model.value)}
+                        onChange={() => setField("models", toggleModel(form.models, model.value))}
+                        className="size-4 accent-primary"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-mono text-xs text-text-main">{model.value}</span>
+                        {(model.label !== model.value || providerText) && (
+                          <span className="block truncate text-[11px] text-text-muted">
+                            {[model.label !== model.value ? model.label : "", providerText].filter(Boolean).join(" / ")}
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           )}
           <p className="mt-2 text-xs text-text-muted">
@@ -322,7 +446,7 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
   );
 }
 
-function RuleRow({ rule, onEdit, onDelete, onToggle }) {
+function RuleRow({ rule, modelOptionMap, onEdit, onDelete, onToggle }) {
   const state = getRuleState(rule);
 
   return (
@@ -335,6 +459,7 @@ function RuleRow({ rule, onEdit, onDelete, onToggle }) {
         <p className="truncate text-sm font-semibold text-text-main">{rule.description || rule.scopeName || rule.scopeId}</p>
         <p className="truncate text-xs text-text-muted">{rule.scopeName || rule.scopeId}</p>
         <p className="truncate text-xs text-text-muted">Models: {summarizeModels(rule.models)}</p>
+        <SelectedModelChips models={rule.models} modelOptionMap={modelOptionMap} limit={3} className="mt-2" />
       </div>
 
       <UsageBar rule={rule} />
@@ -401,6 +526,10 @@ export default function QuotaRulesManager() {
   const [editingRule, setEditingRule] = useState(null);
   const [confirmRule, setConfirmRule] = useState(null);
   const notify = useNotificationStore();
+  const modelOptionMap = useMemo(() => {
+    const options = getModelOptions(targets);
+    return new Map(options.map((model) => [model.value, model]));
+  }, [targets]);
 
   const fetchRules = useCallback(async () => {
     try {
@@ -568,6 +697,7 @@ export default function QuotaRulesManager() {
               <RuleRow
                 key={rule.id}
                 rule={rule}
+                modelOptionMap={modelOptionMap}
                 onEdit={openEdit}
                 onDelete={setConfirmRule}
                 onToggle={toggleRule}

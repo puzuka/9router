@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { AI_MODELS } from "@/shared/constants/models.js";
 
 export const QUOTA_SCOPE_TYPES = new Set(["global", "apiKey", "provider", "providerConnection"]);
 export const QUOTA_PERIODS = new Set(["today", "24h", "7d", "30d"]);
@@ -144,6 +145,56 @@ function buildUsageWhere(rule, apiKeyValue, now = new Date(), options = {}) {
 function usageMetricValue(row, metric) {
   if (!row) return 0;
   return Number(row[metric] || 0);
+}
+
+function addTargetModel(modelMap, id, options = {}) {
+  const modelId = normalizeModelId(id);
+  if (!modelId) return;
+  const provider = normalizeModelId(options.provider);
+  const name = normalizeModelId(options.name);
+  const existing = modelMap.get(modelId) || { id: modelId, name: name || modelId, providers: new Set() };
+  if (name && existing.name === existing.id) existing.name = name;
+  if (provider) existing.providers.add(provider);
+  modelMap.set(modelId, existing);
+}
+
+function addFullTargetModel(modelMap, fullModel, fallbackName) {
+  if (fullModel && typeof fullModel === "object") {
+    addTargetModel(modelMap, fullModel.model, { name: fallbackName, provider: fullModel.provider });
+    return;
+  }
+  const value = normalizeModelId(fullModel);
+  if (!value) return;
+  const slashIndex = value.indexOf("/");
+  if (slashIndex === -1) {
+    addTargetModel(modelMap, value, { name: fallbackName });
+    return;
+  }
+  addTargetModel(modelMap, value.slice(slashIndex + 1), {
+    name: fallbackName,
+    provider: value.slice(0, slashIndex),
+  });
+}
+
+export function buildQuotaModelTargets({ supportedModels = AI_MODELS, pricing = {}, aliases = {}, customModels = [] } = {}) {
+  const modelMap = new Map();
+
+  for (const model of supportedModels || []) {
+    addTargetModel(modelMap, model.model, { name: model.name, provider: model.provider });
+  }
+  for (const [provider, models] of Object.entries(pricing || {})) {
+    for (const model of Object.keys(models || {})) addTargetModel(modelMap, model, { provider });
+  }
+  for (const [alias, fullModel] of Object.entries(aliases || {})) {
+    addFullTargetModel(modelMap, fullModel, alias);
+  }
+  for (const model of customModels || []) {
+    addTargetModel(modelMap, model.id, { name: model.name, provider: model.providerAlias });
+  }
+
+  return [...modelMap.values()]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((model) => ({ id: model.id, name: model.name, providers: [...model.providers].sort() }));
 }
 
 function resetAtForPeriod(period, now = new Date(), options = {}) {
@@ -302,21 +353,19 @@ export async function getQuotaUsage(rule, options = {}) {
 }
 
 export async function getQuotaTargets() {
-  const [apiKeys, connections, pricing] = await Promise.all([
+  const [apiKeys, connections, pricing, aliases, customModels] = await Promise.all([
     import("./apiKeysRepo.js").then((m) => m.getApiKeys()).catch(() => []),
     import("./connectionsRepo.js").then((m) => m.getProviderConnections()).catch(() => []),
     import("./pricingRepo.js").then((m) => m.getPricing()).catch(() => ({})),
+    import("./aliasRepo.js").then((m) => m.getModelAliases()).catch(() => ({})),
+    import("./aliasRepo.js").then((m) => m.getCustomModels()).catch(() => []),
   ]);
   const providers = [...new Set(connections.map((conn) => conn.provider).filter(Boolean))].sort();
-  const modelSet = new Set();
-  for (const [provider, models] of Object.entries(pricing || {})) {
-    for (const model of Object.keys(models || {})) modelSet.add(model);
-  }
 
   return {
     apiKeys: apiKeys.map((key) => ({ id: key.id, name: key.name || key.id, isActive: key.isActive })),
     providers: providers.map((id) => ({ id, name: id })),
-    models: [...modelSet].sort().map((id) => ({ id, name: id })),
+    models: buildQuotaModelTargets({ pricing, aliases, customModels }),
     providerConnections: connections.map((conn) => ({
       id: conn.id,
       provider: conn.provider,

@@ -19,6 +19,7 @@ function normalizeUsageFilter(input) {
   return {
     period: input.period || "all",
     apiKey: input.apiKey || null,
+    provider: input.provider || null,
     tzOffsetMinutes: Number.isFinite(Number(input.tzOffsetMinutes)) ? Number(input.tzOffsetMinutes) : new Date().getTimezoneOffset(),
   };
 }
@@ -849,6 +850,231 @@ export async function getUsageStats(input = "all") {
 
   stats.totalRequests = Object.values(stats.byProvider).reduce((sum, p) => sum + (p.requests || 0), 0);
   return stats;
+}
+
+function getConnectionDisplay(connection, connectionId) {
+  if (!connection) {
+    if (!connectionId) {
+      return {
+        label: "Local / no account",
+        secondary: "No provider account",
+        authType: "none",
+        isActive: true,
+        testStatus: null,
+      };
+    }
+    return {
+      label: `Account ${connectionId.slice(0, 8)}...`,
+      secondary: "Missing provider connection",
+      authType: "unknown",
+      isActive: false,
+      testStatus: "missing",
+    };
+  }
+
+  const label = connection.name || connection.email || `Account ${connection.id.slice(0, 8)}...`;
+  const authType = connection.authType || "unknown";
+  const authLabel = authType === "apikey"
+    ? "API key"
+    : authType === "oauth"
+      ? "OAuth account"
+      : authType === "access_token"
+        ? "Access token"
+        : authType;
+  const secondary = connection.email && connection.email !== label
+    ? `${authLabel} / ${connection.email}`
+    : authLabel;
+
+  return {
+    label,
+    secondary,
+    authType,
+    email: connection.email || null,
+    isActive: connection.isActive !== false,
+    testStatus: connection.testStatus || null,
+  };
+}
+
+function isStatusOk(status) {
+  const normalized = String(status || "ok").toLowerCase();
+  return normalized === "ok" || normalized === "success" || normalized === "done";
+}
+
+/**
+ * Provider-first usage aggregate for dashboard drill-downs.
+ * Groups provider account/API-key connections across all models.
+ */
+export async function getProviderUsageBreakdown(input = "today") {
+  const { period, provider: providerFilter, tzOffsetMinutes } = normalizeUsageFilter(input);
+  const db = await getAdapter();
+  const { startIso, endIso } = getUsagePeriodWindow(period, tzOffsetMinutes);
+
+  const where = [];
+  const params = [];
+  if (startIso) { where.push("timestamp >= ?"); params.push(startIso); }
+  if (endIso) { where.push("timestamp <= ?"); params.push(endIso); }
+  if (providerFilter) { where.push("provider = ?"); params.push(providerFilter); }
+
+  const rows = db.all(
+    `SELECT
+       COALESCE(NULLIF(provider, ''), 'unknown') AS provider,
+       connectionId,
+       COALESCE(NULLIF(status, ''), 'ok') AS status,
+       COUNT(*) AS requests,
+       COALESCE(SUM(promptTokens), 0) AS promptTokens,
+       COALESCE(SUM(completionTokens), 0) AS completionTokens,
+       COALESCE(SUM(cost), 0) AS cost,
+       MAX(timestamp) AS lastUsed
+     FROM usageHistory
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     GROUP BY COALESCE(NULLIF(provider, ''), 'unknown'), connectionId, COALESCE(NULLIF(status, ''), 'ok')
+     ORDER BY lastUsed DESC`,
+    params
+  );
+
+  let allConnections = [];
+  try {
+    const { getProviderConnections } = await import("./connectionsRepo.js");
+    allConnections = await getProviderConnections();
+  } catch {}
+
+  const connectionMap = {};
+  for (const connection of allConnections) connectionMap[connection.id] = connection;
+
+  const providerMap = new Map();
+  const totals = {
+    totalProviders: 0,
+    totalAccounts: 0,
+    totalRequests: 0,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    totalTokens: 0,
+    totalCost: 0,
+  };
+
+  function getProviderEntry(providerId) {
+    if (!providerMap.has(providerId)) {
+      providerMap.set(providerId, {
+        id: providerId,
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cost: 0,
+        lastUsed: null,
+        statusCounts: {},
+        lastStatus: "ok",
+        accounts: [],
+        _accountMap: new Map(),
+      });
+    }
+    return providerMap.get(providerId);
+  }
+
+  for (const row of rows) {
+    const providerId = row.provider || "unknown";
+    const provider = getProviderEntry(providerId);
+    const connectionId = row.connectionId || null;
+    const accountKey = connectionId || `${providerId}:local-no-account`;
+    const status = row.status || "ok";
+    const requests = Number(row.requests || 0);
+    const promptTokens = Number(row.promptTokens || 0);
+    const completionTokens = Number(row.completionTokens || 0);
+    const totalTokens = promptTokens + completionTokens;
+    const cost = Number(row.cost || 0);
+
+    if (!provider._accountMap.has(accountKey)) {
+      const connection = connectionId ? connectionMap[connectionId] : null;
+      provider._accountMap.set(accountKey, {
+        id: accountKey,
+        connectionId,
+        provider: providerId,
+        ...getConnectionDisplay(connection, connectionId),
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cost: 0,
+        lastUsed: null,
+        statusCounts: {},
+        lastStatus: "ok",
+      });
+    }
+
+    const account = provider._accountMap.get(accountKey);
+
+    provider.requests += requests;
+    provider.promptTokens += promptTokens;
+    provider.completionTokens += completionTokens;
+    provider.totalTokens += totalTokens;
+    provider.cost += cost;
+    provider.statusCounts[status] = (provider.statusCounts[status] || 0) + requests;
+
+    account.requests += requests;
+    account.promptTokens += promptTokens;
+    account.completionTokens += completionTokens;
+    account.totalTokens += totalTokens;
+    account.cost += cost;
+    account.statusCounts[status] = (account.statusCounts[status] || 0) + requests;
+
+    if (row.lastUsed && (!provider.lastUsed || new Date(row.lastUsed) > new Date(provider.lastUsed))) {
+      provider.lastUsed = row.lastUsed;
+      provider.lastStatus = status;
+    }
+    if (row.lastUsed && (!account.lastUsed || new Date(row.lastUsed) > new Date(account.lastUsed))) {
+      account.lastUsed = row.lastUsed;
+      account.lastStatus = status;
+    }
+  }
+
+  const providers = [...providerMap.values()].map((provider) => {
+    const accounts = [...provider._accountMap.values()]
+      .map((account) => ({
+        ...account,
+        okRequests: Object.entries(account.statusCounts)
+          .filter(([status]) => isStatusOk(status))
+          .reduce((sum, [, count]) => sum + count, 0),
+        errorRequests: Object.entries(account.statusCounts)
+          .filter(([status]) => !isStatusOk(status))
+          .reduce((sum, [, count]) => sum + count, 0),
+      }))
+      .sort((a, b) => {
+        if ((b.requests || 0) !== (a.requests || 0)) return (b.requests || 0) - (a.requests || 0);
+        return new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0);
+      });
+    delete provider._accountMap;
+    return {
+      ...provider,
+      accounts,
+      accountCount: accounts.length,
+      okRequests: Object.entries(provider.statusCounts)
+        .filter(([status]) => isStatusOk(status))
+        .reduce((sum, [, count]) => sum + count, 0),
+      errorRequests: Object.entries(provider.statusCounts)
+        .filter(([status]) => !isStatusOk(status))
+        .reduce((sum, [, count]) => sum + count, 0),
+    };
+  }).sort((a, b) => {
+    if ((b.requests || 0) !== (a.requests || 0)) return (b.requests || 0) - (a.requests || 0);
+    return new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0);
+  });
+
+  for (const provider of providers) {
+    totals.totalRequests += provider.requests || 0;
+    totals.totalPromptTokens += provider.promptTokens || 0;
+    totals.totalCompletionTokens += provider.completionTokens || 0;
+    totals.totalTokens += provider.totalTokens || 0;
+    totals.totalCost += provider.cost || 0;
+    totals.totalAccounts += provider.accountCount || 0;
+  }
+  totals.totalProviders = providers.length;
+
+  return {
+    period,
+    generatedAt: new Date().toISOString(),
+    totals,
+    providers,
+  };
 }
 
 export async function getChartData(input = "7d") {
