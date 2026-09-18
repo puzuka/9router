@@ -17,6 +17,13 @@ vi.mock("../../src/sse/services/auth.js", () => ({
   isValidApiKey: vi.fn(),
 }));
 vi.mock("@/lib/localDb", () => ({ getSettings: async () => ({ requireApiKey: false }) }));
+// Quota bookkeeping (local feature) records every successful request on its own;
+// isolate it here so assertions only cover exact-usage persistence.
+vi.mock("../../src/sse/services/quota.js", () => ({
+  enforceQuota: async () => ({ allowed: true }),
+  recordSuccessfulUsage: vi.fn(),
+  shouldFallbackForQuota: () => false,
+}));
 vi.mock("../../src/sse/services/model.js", () => ({
   getModelInfo: async () => ({ provider: "openai", model: "text-embedding-3-small" }),
 }));

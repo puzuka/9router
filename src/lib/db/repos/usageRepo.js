@@ -1078,7 +1078,7 @@ export async function getProviderUsageBreakdown(input = "today") {
 }
 
 export async function getChartData(input = "7d") {
-  const { period, apiKey, tzOffsetMinutes } = normalizeUsageFilter(input);
+  const { period, apiKey, tzOffsetMinutes = new Date().getTimezoneOffset() } = normalizeUsageFilter(input);
   const db = await getAdapter();
   const now = Date.now();
 

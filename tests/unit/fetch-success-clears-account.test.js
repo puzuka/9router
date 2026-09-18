@@ -23,6 +23,7 @@ vi.mock("@/sse/services/auth.js", () => ({
 vi.mock("@/lib/localDb", () => ({
   getSettings: mocks.getSettings,
   getCombos: mocks.getCombos,
+  checkQuota: async () => ({ allowed: true }),
 }));
 
 vi.mock("open-sse/handlers/fetch/index.js", () => ({
