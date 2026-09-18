@@ -1,22 +1,37 @@
 # syntax=docker/dockerfile:1.7
 ARG NODE_IMAGE=node:22-alpine
+
+# Registry/mirrors — defaults are the official sources (global CDN, fast for
+# most regions incl. SEA). CN networks can build with:
+#   --build-arg APK_MIRROR=mirrors.aliyun.com \
+#   --build-arg NPM_REGISTRY=https://registry.npmmirror.com
+ARG APK_MIRROR=dl-cdn.alpinelinux.org
+ARG NPM_REGISTRY=https://registry.npmjs.org
+
 FROM ${NODE_IMAGE} AS base
+ARG APK_MIRROR
 WORKDIR /app
-# CN mirror for apk (used by builder and runner stages)
-RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
+RUN sed -i "s|dl-cdn.alpinelinux.org|${APK_MIRROR}|g" /etc/apk/repositories
 
 FROM base AS builder
+# No `apk upgrade`: it re-downloads the whole userland (~6 min) on every
+# build. Base-image updates come via `docker build --pull` / NODE_IMAGE bump.
+RUN apk --no-cache add python3 make g++ linux-headers
 
-RUN apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers
-
-COPY package.json ./
-RUN npm install --registry=https://registry.npmmirror.com
+# Install dependencies before copying sources so a source-only change hits
+# the node_modules layer cache. /root/.npm is a persistent BuildKit cache:
+# after a dependency bump, tarballs come from cache instead of the network.
+COPY package.json package-lock.json ./
+ARG NPM_REGISTRY
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund --registry=$NPM_REGISTRY
 
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM ${NODE_IMAGE} AS runner
+ARG APK_MIRROR
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="9router"
@@ -49,7 +64,7 @@ RUN mkdir -p /app/data && chown -R node:node /app && \
   ln -sf /app/data-home /root/.9router 2>/dev/null || true
 
 # Fix permissions at runtime (handles mounted volumes)
-RUN apk --no-cache upgrade && apk --no-cache add su-exec && \
+RUN apk --no-cache add su-exec && \
   printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
   chmod +x /entrypoint.sh
 
