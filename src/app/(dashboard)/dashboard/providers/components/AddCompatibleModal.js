@@ -27,6 +27,17 @@ const VARIANT_CONFIG = {
     errorLabel: "Anthropic Compatible",
     hasApiType: false,
   },
+  systemone: {
+    title: "Add System One Compatible",
+    type: "systemone-compatible",
+    defaultBaseUrl: "https://api.typesafe.ai/v1",
+    namePlaceholder: "System One Compatible (Prod)",
+    prefixPlaceholder: "so-prod",
+    baseUrlHint: "Use the base URL (ending in /v1) for your System One-compatible API. The system will append /systemone.",
+    modelIdPlaceholder: "e.g. jev-latest",
+    errorLabel: "System One Compatible",
+    hasApiType: false,
+  },
 };
 
 const API_TYPE_OPTIONS = [
@@ -212,7 +223,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
 }
 
 AddCompatibleModal.propTypes = {
-  variant: PropTypes.oneOf(["openai", "anthropic"]).isRequired,
+  variant: PropTypes.oneOf(["openai", "anthropic", "systemone"]).isRequired,
   isOpen: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   onCreated: PropTypes.func.isRequired,

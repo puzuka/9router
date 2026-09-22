@@ -259,6 +259,15 @@ export function formatResetTime(date) {
 }
 
 /**
+ * Render a Freebucks hourly rate the way the Freebuff dashboard does:
+ * "15 Freebucks/hr" — a bare number would read as dollars; the unit is the
+ * hour, not the message.
+ */
+export function formatFreebucksPrice(price) {
+  return `${Math.max(0, Math.round(Number(price) || 0))} Freebucks/hr`;
+}
+
+/**
  * Get Tailwind color class based on percentage
  * @param {number} percentage - Remaining percentage (0-100)
  * @returns {string} Color name: "green" | "yellow" | "red"
@@ -611,6 +620,28 @@ export function parseQuotaData(provider, data) {
               remainingPercentage: quota.remainingPercentage,
               isCreditBalance: quota.isCreditBalance ?? true,
               currency: quota.currency || (name.includes("(") ? name.slice(name.indexOf("(") + 1, name.indexOf(")")) : "USD"),
+            });
+          });
+        }
+        break;
+
+      case "freebuff":
+        // Session quotas keyed by model id — label rows with the friendly
+        // displayName (from the registry) and keep modelKey for ordering.
+        // Metered rows carry the live Freebucks price (price) + promo tagline
+        // (priceNote), both server-authoritative.
+        if (data.quotas) {
+          Object.entries(data.quotas).forEach(([modelKey, quota]) => {
+            normalizedQuotas.push({
+              name: quota.displayName || modelKey,
+              modelKey,
+              used: quota.used || 0,
+              total: quota.total || 0,
+              resetAt: quota.resetAt || null,
+              recurring: quota.recurring !== false,
+              price: quota.price,
+              priceNote: quota.priceNote,
+              ...(quota.peak ? { peak: true, peakSurcharge: quota.peakSurcharge, peakEndsAt: quota.peakEndsAt } : {}),
             });
           });
         }

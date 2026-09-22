@@ -104,6 +104,8 @@ export default function ProvidersPage() {
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] =
     useState(false);
+  const [showAddSystemOneCompatibleModal, setShowAddSystemOneCompatibleModal] =
+    useState(false);
   const [testingMode, setTestingMode] = useState(null);
   const [testResults, setTestResults] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -288,6 +290,18 @@ export default function ProvidersPage() {
       (p) => matchSearch(p.name) && matchStatus(getProviderStats(p.id, "apikey")),
     );
 
+  const systemOneCompatibleProviders = providerNodes
+    .filter((node) => node.type === "systemone-compatible")
+    .map((node) => ({
+      id: node.id,
+      name: node.name || "System One Compatible",
+      color: "#2563EB",
+      textIcon: "SO",
+    }))
+    .filter(
+      (p) => matchSearch(p.name) && matchStatus(getProviderStats(p.id, "apikey")),
+    );
+
   // Dual-auth providers (oauth + apikey) store API keys as authType "apikey"
   // (and sometimes "api_key"). Card stats must count both so totals match detail.
   // kiro has no authModes in registry but accepts both (headless uses "api_key").
@@ -382,7 +396,8 @@ export default function ProvidersPage() {
     freeTierEntries.length > 0 ||
     apikeyEntries.length > 0 ||
     compatibleProviders.length > 0 ||
-    anthropicCompatibleProviders.length > 0;
+    anthropicCompatibleProviders.length > 0 ||
+    systemOneCompatibleProviders.length > 0;
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
@@ -422,6 +437,14 @@ export default function ProvidersPage() {
             <Button
               size="sm"
               icon="add"
+              onClick={() => setShowAddSystemOneCompatibleModal(true)}
+              className="w-full sm:w-auto"
+            >
+              Add System One Compatible
+            </Button>
+            <Button
+              size="sm"
+              icon="add"
               onClick={() => setShowAddAnthropicCompatibleModal(true)}
               className="w-full sm:w-auto"
             >
@@ -439,14 +462,15 @@ export default function ProvidersPage() {
           </div>
         </div>
         {compatibleProviders.length === 0 &&
-        anthropicCompatibleProviders.length === 0 ? (
+        anthropicCompatibleProviders.length === 0 &&
+        systemOneCompatibleProviders.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-2 border border-dashed border-border rounded-xl text-text-muted text-sm">
             <span className="material-symbols-outlined text-[18px]">extension</span>
-            <span>No custom providers — use buttons above to add OpenAI/Anthropic compatible endpoints</span>
+            <span>No custom providers — use buttons above to add OpenAI/Anthropic/System One compatible endpoints</span>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-            {[...compatibleProviders, ...anthropicCompatibleProviders].map(
+            {[...compatibleProviders, ...anthropicCompatibleProviders, ...systemOneCompatibleProviders].map(
               (info) => (
                 <ApiKeyProviderCard
                   key={info.id}
@@ -659,6 +683,15 @@ export default function ProvidersPage() {
         onCreated={(node) => {
           setProviderNodes((prev) => [...prev, node]);
           setShowAddAnthropicCompatibleModal(false);
+        }}
+      />
+      <AddCompatibleModal
+        variant="systemone"
+        isOpen={showAddSystemOneCompatibleModal}
+        onClose={() => setShowAddSystemOneCompatibleModal(false)}
+        onCreated={(node) => {
+          setProviderNodes((prev) => [...prev, node]);
+          setShowAddSystemOneCompatibleModal(false);
         }}
       />
 

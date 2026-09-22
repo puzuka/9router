@@ -4,7 +4,16 @@ import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 
-export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic }) {
+export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic, nodeType }) {
+  const effectiveType = nodeType || (isAnthropic ? "anthropic-compatible" : "openai-compatible");
+  const isSystemOne = effectiveType === "systemone-compatible";
+  const providerLabel = isSystemOne ? "System One" : isAnthropic ? "Anthropic" : "OpenAI";
+  const defaultBaseUrl = isSystemOne
+    ? "https://api.typesafe.ai/v1"
+    : isAnthropic
+      ? "https://api.anthropic.com/v1"
+      : "https://api.openai.com/v1";
+
   const [formData, setFormData] = useState({
     name: "",
     prefix: "",
@@ -23,10 +32,10 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
         name: node.name || "",
         prefix: node.prefix || "",
         apiType: node.apiType || "chat",
-        baseUrl: node.baseUrl || (isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
+        baseUrl: node.baseUrl || defaultBaseUrl,
       });
     }
-  }, [node, isAnthropic]);
+  }, [node, defaultBaseUrl]);
 
   const apiTypeOptions = [
     { value: "chat", label: "Chat Completions" },
@@ -42,7 +51,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
         prefix: formData.prefix,
         baseUrl: formData.baseUrl,
       };
-      if (!isAnthropic) {
+      if (!isAnthropic && !isSystemOne) {
         payload.apiType = formData.apiType;
       }
       await onSave(payload);
@@ -60,7 +69,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
         body: JSON.stringify({
           baseUrl: formData.baseUrl,
           apiKey: checkKey,
-          type: isAnthropic ? "anthropic-compatible" : "openai-compatible",
+          type: effectiveType,
           modelId: checkModelId.trim() || undefined
         }),
       });
@@ -76,23 +85,23 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
   if (!node) return null;
 
   return (
-    <Modal isOpen={isOpen} title={`Edit ${isAnthropic ? "Anthropic" : "OpenAI"} Compatible`} onClose={onClose}>
+    <Modal isOpen={isOpen} title={`Edit ${providerLabel} Compatible`} onClose={onClose}>
       <div className="flex flex-col gap-4">
         <Input
           label="Name"
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          placeholder={`${isAnthropic ? "Anthropic" : "OpenAI"} Compatible (Prod)`}
+          placeholder={`${providerLabel} Compatible (Prod)`}
           hint="Required. A friendly label for this node."
         />
         <Input
           label="Prefix"
           value={formData.prefix}
           onChange={(e) => setFormData({ ...formData, prefix: e.target.value })}
-          placeholder={isAnthropic ? "ac-prod" : "oc-prod"}
+          placeholder={isSystemOne ? "so-prod" : isAnthropic ? "ac-prod" : "oc-prod"}
           hint="Required. Used as the provider prefix for model IDs."
         />
-        {!isAnthropic && (
+        {!isAnthropic && !isSystemOne && (
           <Select
             label="API Type"
             options={apiTypeOptions}
@@ -104,8 +113,10 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           label="Base URL"
           value={formData.baseUrl}
           onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
-          placeholder={isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"}
-          hint={`Use the base URL (ending in /v1) for your ${isAnthropic ? "Anthropic" : "OpenAI"}-compatible API.`}
+          placeholder={defaultBaseUrl}
+          hint={isSystemOne
+            ? "Use the base URL (ending in /v1) for your System One-compatible API. The system will append /systemone."
+            : `Use the base URL (ending in /v1) for your ${providerLabel}-compatible API.`}
         />
         <div className="flex gap-2">
           <Input
@@ -121,13 +132,15 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
             </Button>
           </div>
         </div>
-        <Input
-          label="Model ID (optional)"
-          value={checkModelId}
-          onChange={(e) => setCheckModelId(e.target.value)}
-          placeholder="e.g. my-model-id"
-          hint="If provider lacks /models endpoint, enter a model ID to validate via chat/completions instead."
-        />
+        {!isSystemOne && (
+          <Input
+            label="Model ID (optional)"
+            value={checkModelId}
+            onChange={(e) => setCheckModelId(e.target.value)}
+            placeholder="e.g. my-model-id"
+            hint="If provider lacks /models endpoint, enter a model ID to validate via chat/completions instead."
+          />
+        )}
         {validationResult && (
           <Badge variant={validationResult === "success" ? "success" : "error"}>
             {validationResult === "success" ? "Valid" : "Invalid"}
@@ -158,4 +171,5 @@ EditCompatibleNodeModal.propTypes = {
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
   isAnthropic: PropTypes.bool,
+  nodeType: PropTypes.oneOf(["openai-compatible", "anthropic-compatible", "systemone-compatible"]),
 };

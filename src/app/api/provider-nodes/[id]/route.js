@@ -48,6 +48,14 @@ export async function PUT(request, { params }) {
       }
     }
 
+    // Sanitize Base URL for System One Compatible (strip trailing slash and /systemone)
+    if (node.type === "systemone-compatible") {
+      sanitizedBaseUrl = sanitizedBaseUrl.replace(/\/$/, "");
+      if (sanitizedBaseUrl.endsWith("/systemone")) {
+        sanitizedBaseUrl = sanitizedBaseUrl.slice(0, -"/systemone".length);
+      }
+    }
+
     const updates = {
       name: name.trim(),
       prefix: prefix.trim(),

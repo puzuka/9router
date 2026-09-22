@@ -118,6 +118,19 @@ async function runHeavyStartup() {
   import("@/sse/services/backgroundTokenRefresh.js")
     .then(({ startBackgroundTokenRefresh }) => startBackgroundTokenRefresh())
     .catch((e) => console.log("[BackgroundTokenRefresh] scheduler start failed:", e.message));
+
+  // Freebuff anti-abuse keeper: ad impressions + PostHog heartbeat + pacing.
+  // Idempotent + fail-open; never affects non-freebuff providers.
+  import("@/sse/services/freebuffKeeper.js")
+    .then(({ startFreebuffKeeper }) => startFreebuffKeeper())
+    .catch((e) => console.log("[FreebuffKeeper] scheduler start failed:", e.message));
+
+  // Periodic DB auto-backup: online sqlite snapshot every
+  // DB_BACKUP_INTERVAL_MINUTES (default 6h). health.js restores from these on
+  // startup when the live file is corrupt. Idempotent + fail-open.
+  import("@/lib/db/autoBackup.js")
+    .then(({ startDbAutoBackup }) => startDbAutoBackup())
+    .catch((e) => console.log("[DB-AutoBackup] scheduler start failed:", e.message));
 }
 
 function hasQuotaAutoPingEnabled(settings) {

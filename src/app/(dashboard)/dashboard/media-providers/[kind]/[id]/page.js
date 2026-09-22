@@ -5,14 +5,16 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { Card, Badge, Button, AddCustomEmbeddingModal, NoAuthProxyCard, ProviderInfoCard } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
-import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, isCustomEmbeddingProvider } from "@/shared/constants/providers";
+import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, isCustomEmbeddingProvider, isSystemOneCompatibleProvider } from "@/shared/constants/providers";
 import ConnectionsCard from "@/app/(dashboard)/dashboard/providers/components/ConnectionsCard";
 import ModelsCard from "@/app/(dashboard)/dashboard/providers/components/ModelsCard";
+import EditCompatibleNodeModal from "@/app/(dashboard)/dashboard/providers/[id]/EditCompatibleNodeModal";
 import { KIND_EXAMPLE_CONFIG } from "./components/exampleShared";
 import { EmbeddingExampleCard } from "./components/EmbeddingExampleCard";
 import { TtsExampleCard } from "./components/TtsExampleCard";
 import { GenericExampleCard } from "./components/GenericExampleCard";
 import { SttExampleCard } from "./components/SttExampleCard";
+import { SystemOneExampleCard } from "./components/SystemOneExampleCard";
 
 // MediaProviderDetailPage
 export default function MediaProviderDetailPage() {
@@ -20,6 +22,7 @@ export default function MediaProviderDetailPage() {
   const router = useRouter();
   const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kind);
   const isCustom = isCustomEmbeddingProvider(id) && kind === "embedding";
+  const isSystemOneNode = isSystemOneCompatibleProvider(id) && kind === "systemOne";
 
   const handleDeleteCustom = async () => {
     if (!confirm("Delete this Custom Embedding node?")) return;
@@ -33,7 +36,10 @@ export default function MediaProviderDetailPage() {
 
   const [customNode, setCustomNode] = useState(null);
   const [customLoading, setCustomLoading] = useState(isCustom);
+  const [systemOneNode, setSystemOneNode] = useState(null);
+  const [systemOneNodeLoading, setSystemOneNodeLoading] = useState(isSystemOneNode);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showEditNodeModal, setShowEditNodeModal] = useState(false);
 
   // Fetch custom node info from API for custom embedding nodes
   useEffect(() => {
@@ -50,6 +56,21 @@ export default function MediaProviderDetailPage() {
     return () => { cancelled = true; };
   }, [id, isCustom]);
 
+  // Fetch System One Compatible node info (user-supplied base URL + key pool)
+  useEffect(() => {
+    if (!isSystemOneNode) return;
+    let cancelled = false;
+    fetch("/api/provider-nodes", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        setSystemOneNode((d.nodes || []).find((n) => n.id === id) || null);
+        setSystemOneNodeLoading(false);
+      })
+      .catch(() => { if (!cancelled) setSystemOneNodeLoading(false); });
+    return () => { cancelled = true; };
+  }, [id, isSystemOneNode]);
+
   if (!kindConfig) return notFound();
 
   const builtInProvider = AI_PROVIDERS[id];
@@ -57,16 +78,46 @@ export default function MediaProviderDetailPage() {
   // For custom embedding nodes, build a synthetic provider object
   const provider = isCustom
     ? (customNode ? { id, name: customNode.name || "Custom Embedding", color: "#6366F1", textIcon: "CE" } : null)
-    : builtInProvider;
+    : isSystemOneNode
+      ? (systemOneNode ? { id, name: systemOneNode.name || "System One Compatible", color: "#2563EB", textIcon: "SO" } : null)
+      : builtInProvider;
 
-  if (!isCustom && !builtInProvider) return notFound();
+  if (!isCustom && !isSystemOneNode && !builtInProvider) return notFound();
   if (isCustom && !customLoading && !customNode) return notFound();
-  if (isCustom && customLoading) {
+  if (isSystemOneNode && !systemOneNodeLoading && !systemOneNode) return notFound();
+  if ((isCustom && customLoading) || (isSystemOneNode && systemOneNodeLoading)) {
     return <div className="text-text-muted text-sm py-12 text-center">Loading...</div>;
   }
 
-  const kinds = isCustom ? ["embedding"] : (provider.serviceKinds ?? ["llm"]);
-  if (!isCustom && !kinds.includes(kind)) return notFound();
+  const kinds = isCustom ? ["embedding"] : isSystemOneNode ? ["systemOne"] : (provider.serviceKinds ?? ["llm"]);
+  if (!isCustom && !isSystemOneNode && !kinds.includes(kind)) return notFound();
+
+  const handleSaveSystemOneNode = async (formData) => {
+    try {
+      const res = await fetch(`/api/provider-nodes/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSystemOneNode(data.node);
+        setShowEditNodeModal(false);
+      }
+    } catch (error) {
+      console.log("Error updating System One Compatible node:", error);
+    }
+  };
+
+  const handleDeleteSystemOneNode = async () => {
+    if (!confirm("Delete this System One Compatible node and all of its API keys?")) return;
+    try {
+      const res = await fetch(`/api/provider-nodes/${id}`, { method: "DELETE" });
+      if (res.ok) router.push(`/dashboard/media-providers/${kind}`);
+    } catch (error) {
+      console.log("Error deleting System One Compatible node:", error);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-8">
@@ -109,6 +160,7 @@ export default function MediaProviderDetailPage() {
             </div>
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               {isCustom && <Badge variant="default" size="sm">Custom · {customNode?.prefix}</Badge>}
+              {isSystemOneNode && <Badge variant="default" size="sm">System One Compatible · {systemOneNode?.prefix}</Badge>}
               {kinds.map((k) => (
                 <Badge key={k} variant={k === kind ? "primary" : "default"} size="sm">
                   {k.toUpperCase()}
@@ -122,6 +174,16 @@ export default function MediaProviderDetailPage() {
                 Edit
               </Button>
               <Button size="sm" variant="secondary" icon="delete" onClick={handleDeleteCustom}>
+                Delete
+              </Button>
+            </div>
+          )}
+          {isSystemOneNode && (
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <Button size="sm" variant="secondary" icon="edit" onClick={() => setShowEditNodeModal(true)}>
+                Edit
+              </Button>
+              <Button size="sm" variant="secondary" icon="delete" onClick={handleDeleteSystemOneNode}>
                 Delete
               </Button>
             </div>
@@ -155,6 +217,15 @@ export default function MediaProviderDetailPage() {
         </div>
       )}
 
+      {/* System One Compatible node details — user-supplied endpoint */}
+      {isSystemOneNode && (
+        <ProviderInfoCard
+          config={{ baseUrl: `${(systemOneNode.baseUrl || "").replace(/\/$/, "")}/systemone`, defaultModel: "jev-latest" }}
+          provider={{ notice: { text: `Custom System One-compatible endpoint. Add one or more API keys below — requests rotate across keys automatically. Prefix: ${systemOneNode.prefix}` } }}
+          title="System One Compatible Config"
+        />
+      )}
+
       {/* Connections */}
       {!isCustom && provider.noAuth ? (
         <NoAuthProxyCard providerId={id} />
@@ -162,8 +233,8 @@ export default function MediaProviderDetailPage() {
         <ConnectionsCard providerId={id} isOAuth={false} />
       )}
 
-      {/* Models - hidden for tts/webSearch/webFetch (provider IS the model); custom uses prefix as alias */}
-      {kind !== "tts" && kind !== "webSearch" && kind !== "webFetch" && (
+      {/* Models - hidden for tts/webSearch/webFetch/systemOne (provider IS the model); custom uses prefix as alias */}
+      {kind !== "tts" && kind !== "webSearch" && kind !== "webFetch" && kind !== "systemOne" && (
         <ModelsCard
           providerId={id}
           kindFilter={kind}
@@ -171,11 +242,12 @@ export default function MediaProviderDetailPage() {
         />
       )}
 
-      {/* Provider Info — config-driven, supports searchConfig, fetchConfig, ttsConfig, embeddingConfig, searchViaChat */}
-      {!isCustom && (provider.searchConfig || provider.fetchConfig || provider.ttsConfig || provider.sttConfig || provider.embeddingConfig || provider.searchViaChat) && (
+      {/* Provider Info — config-driven, supports systemOneConfig, searchConfig, fetchConfig, ttsConfig, embeddingConfig, searchViaChat */}
+      {!isCustom && (provider.systemOneConfig || provider.searchConfig || provider.fetchConfig || provider.ttsConfig || provider.sttConfig || provider.embeddingConfig || provider.searchViaChat) && (
         <ProviderInfoCard
           config={
-            kind === "webFetch" ? provider.fetchConfig
+            kind === "systemOne" ? provider.systemOneConfig
+              : kind === "webFetch" ? provider.fetchConfig
               : kind === "tts" ? provider.ttsConfig
               : kind === "stt" ? provider.sttConfig
               : kind === "embedding" ? provider.embeddingConfig
@@ -192,6 +264,9 @@ export default function MediaProviderDetailPage() {
       )}
       {kind === "tts" && <TtsExampleCard providerId={id} />}
       {kind === "stt" && !isCustom && <SttExampleCard providerId={id} />}
+      {(kind === "systemOne" && !isCustom) && (
+        <SystemOneExampleCard providerId={id} alias={isSystemOneNode ? systemOneNode.prefix : undefined} />
+      )}
       {!isCustom && KIND_EXAMPLE_CONFIG[kind] && <GenericExampleCard providerId={id} kind={kind} />}
 
       {isCustom && (
@@ -203,6 +278,16 @@ export default function MediaProviderDetailPage() {
             setCustomNode(updated);
             setShowEditModal(false);
           }}
+        />
+      )}
+
+      {isSystemOneNode && (
+        <EditCompatibleNodeModal
+          isOpen={showEditNodeModal}
+          node={systemOneNode}
+          nodeType="systemone-compatible"
+          onSave={handleSaveSystemOneNode}
+          onClose={() => setShowEditNodeModal(false)}
         />
       )}
     </div>

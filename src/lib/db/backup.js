@@ -13,6 +13,13 @@ import { timestampSlug, getAppVersion } from "./version.js";
 
 const KEEP_BACKUPS = 3;
 
+// Auto backups (autoBackup.js) prune separately from migration backups: they
+// are taken far more often, and pruneOldBackups() also has to preserve
+// quarantined corrupt dirs (corrupt-*) and manual recovery artifacts — pruning
+// only auto-* dirs guarantees that.
+const AUTO_BACKUP_PREFIX = "auto-";
+const KEEP_AUTO_BACKUPS = 8;
+
 // Tables excluded from safety backups (large, non-critical, reproducible).
 const BACKUP_EXCLUDE_TABLES = ["requestDetails"];
 
@@ -64,8 +71,10 @@ export function backupDbLite(adapter, destDir, destName = "data.sqlite") {
 
 export function pruneOldBackups() {
   if (!fs.existsSync(BACKUPS_DIR)) return;
+  // auto-* dirs have their own keeper (pruneAutoBackups): the 8-deep live
+  // restore window must survive a schema migration pruning pass.
   const entries = fs.readdirSync(BACKUPS_DIR, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
+    .filter((e) => e.isDirectory() && !e.name.startsWith(AUTO_BACKUP_PREFIX))
     .map((e) => ({ name: e.name, full: path.join(BACKUPS_DIR, e.name), mtime: fs.statSync(path.join(BACKUPS_DIR, e.name)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime);
 
@@ -73,3 +82,20 @@ export function pruneOldBackups() {
     try { fs.rmSync(old.full, { recursive: true, force: true }); } catch {}
   }
 }
+
+// Prune ONLY auto-* dirs (periodic online backups). Migration snapshots and
+// quarantined corrupt files (the evidence trail for a manual .recover) are
+// never touched by this.
+export function pruneAutoBackups(keep = KEEP_AUTO_BACKUPS) {
+  if (!fs.existsSync(BACKUPS_DIR)) return;
+  const entries = fs.readdirSync(BACKUPS_DIR, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name.startsWith(AUTO_BACKUP_PREFIX))
+    .map((e) => ({ name: e.name, full: path.join(BACKUPS_DIR, e.name), mtime: fs.statSync(path.join(BACKUPS_DIR, e.name)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  for (const old of entries.slice(keep)) {
+    try { fs.rmSync(old.full, { recursive: true, force: true }); } catch {}
+  }
+}
+
+export { AUTO_BACKUP_PREFIX, KEEP_AUTO_BACKUPS };

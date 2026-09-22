@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderNodeById } from "@/models";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider, AI_PROVIDERS } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider, isSystemOneCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
 import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
@@ -42,16 +42,16 @@ async function probeWebProvider(provider, apiKey) {
   return res.status !== 401 && res.status !== 403;
 }
 
-// Probe a media provider (tts/embedding/stt/image/video) using *Config.
+// Probe a media provider (tts/embedding/stt/image/video/systemOne) using *Config.
 // Returns true if API key is accepted; null to skip (let default handler decide).
 async function probeMediaProvider(provider, apiKey) {
   const p = AI_PROVIDERS[provider];
   if (!p) return null;
-  const MEDIA_KINDS = new Set(["tts", "embedding", "stt", "image", "video", "music", "imageToText"]);
+  const MEDIA_KINDS = new Set(["tts", "embedding", "stt", "image", "video", "music", "imageToText", "systemOne"]);
   const kinds = p.serviceKinds || ["llm"];
   const isMediaOnly = kinds.every((k) => MEDIA_KINDS.has(k));
   if (!isMediaOnly) return null;
-  const cfg = p.ttsConfig || p.sttConfig || p.embeddingConfig || p.imageConfig || p.videoConfig || p.musicConfig;
+  const cfg = p.ttsConfig || p.sttConfig || p.embeddingConfig || p.imageConfig || p.videoConfig || p.musicConfig || p.systemOneConfig;
   // No probe config → best-effort accept (validate at usage time)
   if (!cfg) return true;
   if (p.noAuth || cfg.authType === "none") return true;
@@ -72,10 +72,25 @@ async function probeMediaProvider(provider, apiKey) {
   }
 
   const method = cfg.method || "POST";
+  // System One endpoints need a structured payload — a chat-style body would
+  // only prove nothing; the minimal question probe mirrors the other probes.
+  const probeBody = p.systemOneConfig
+    ? JSON.stringify({
+        model: cfg.defaultModel || "jev-latest",
+        state: { task: "Connection test" },
+        questions: {
+          ping: {
+            type: "choice",
+            instructions: "Reply with ok.",
+            criteria: { ok: "Always choose ok for this connectivity probe." },
+          },
+        },
+      })
+    : JSON.stringify({ input: "ping", text: "ping", prompt: "ping", model: getDefaultModel(provider) || "test" });
   const res = await fetch(cfg.baseUrl, {
     method,
     headers,
-    body: method === "GET" ? undefined : JSON.stringify({ input: "ping", text: "ping", prompt: "ping", model: getDefaultModel(provider) || "test" }),
+    body: method === "GET" ? undefined : probeBody,
     signal: AbortSignal.timeout(8000),
   });
   return res.status !== 401 && res.status !== 403;
@@ -139,6 +154,40 @@ export async function POST(request) {
         });
         // 401/403 = bad key; anything else (including 400 "model not found") means key works
         isValid = embedRes.status !== 401 && embedRes.status !== 403;
+        return NextResponse.json({
+          valid: isValid,
+          error: isValid ? null : "Invalid API key",
+        });
+      }
+
+      // System One Compatible nodes: probe {base}/systemone with a tiny payload.
+      // 401/403 = bad key; any other status (including 400 from upstream body
+      // validation) proves the key itself is accepted.
+      if (isSystemOneCompatibleProvider(provider)) {
+        const node = await getProviderNodeById(provider);
+        if (!node) {
+          return NextResponse.json({ error: "System One Compatible node not found" }, { status: 404 });
+        }
+        let normalizedBase = node.baseUrl?.trim().replace(/\/$/, "") || "";
+        if (normalizedBase.endsWith("/systemone")) {
+          normalizedBase = normalizedBase.slice(0, -"/systemone".length);
+        }
+        const res = await fetch(`${normalizedBase}/systemone`, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "jev-latest",
+            state: { task: "Connection test" },
+            questions: {
+              ping: {
+                type: "choice",
+                instructions: "Reply with ok.",
+                criteria: { ok: "Always choose ok for this connectivity probe." },
+              },
+            },
+          }),
+        });
+        isValid = res.status !== 401 && res.status !== 403;
         return NextResponse.json({
           valid: isValid,
           error: isValid ? null : "Invalid API key",

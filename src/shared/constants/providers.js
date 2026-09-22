@@ -5,7 +5,7 @@ import { RISK_NOTICE } from "@/shared/constants/providersDisplay";
 const MEDIA_ENTRY_KEYS = [
   "serviceKinds", "ttsConfig", "sttConfig", "embeddingConfig",
   "imageConfig", "imageToTextConfig", "videoConfig", "musicConfig",
-  "searchViaChat", "searchConfig", "fetchConfig", "credentialFallback",
+  "searchViaChat", "searchConfig", "fetchConfig", "systemOneConfig", "credentialFallback",
   "modelsFetcher", "mediaPriority", "hiddenKinds",
 ];
 
@@ -79,11 +79,13 @@ export const MEDIA_PROVIDER_KINDS = [
   { id: "webFetch",    label: "Web Fetch",      icon: "language",          endpoint: { method: "POST", path: "/v1/web/fetch" } },
   { id: "video",       label: "Video",          icon: "movie",             endpoint: { method: "POST", path: "/v1/videos/generations" } },
   { id: "music",       label: "Music",          icon: "music_note",        endpoint: { method: "POST", path: "/v1/audio/music" } },
+  { id: "systemOne",   label: "System One",     icon: "fact_check",        endpoint: { method: "POST", path: "/v1/systemone" } },
 ];
 
 export const OPENAI_COMPATIBLE_PREFIX = "openai-compatible-";
 export const ANTHROPIC_COMPATIBLE_PREFIX = "anthropic-compatible-";
 export const CUSTOM_EMBEDDING_PREFIX = "custom-embedding-";
+export const SYSTEMONE_COMPATIBLE_PREFIX = "systemone-compatible-";
 
 export function isOpenAICompatibleProvider(providerId) {
   return typeof providerId === "string" && providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
@@ -95,6 +97,10 @@ export function isAnthropicCompatibleProvider(providerId) {
 
 export function isCustomEmbeddingProvider(providerId) {
   return typeof providerId === "string" && providerId.startsWith(CUSTOM_EMBEDDING_PREFIX);
+}
+
+export function isSystemOneCompatibleProvider(providerId) {
+  return typeof providerId === "string" && providerId.startsWith(SYSTEMONE_COMPATIBLE_PREFIX);
 }
 
 // All providers (combined)

@@ -6,7 +6,7 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null, modelAssignmentOptions = null, onModelAssignmentChange = null, strictModelAssignment = false }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
@@ -245,6 +245,22 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
                 </div>
               )}
             </div>
+          )}
+          {modelAssignmentOptions && onModelAssignmentChange && (
+            <select
+              value={Object.prototype.hasOwnProperty.call(connection.providerSpecificData || {}, "assignedModel")
+                ? (connection.providerSpecificData.assignedModel || "")
+                : (connection.providerSpecificData?.freebuffModel || "")}
+              onChange={(event) => onModelAssignmentChange(event.target.value)}
+              disabled={!strictModelAssignment}
+              className="max-w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] text-text-main"
+              title="Model assignment"
+            >
+              <option value="">Unassigned</option>
+              {modelAssignmentOptions.map((model) => (
+                <option key={model.id} value={model.id}>{model.name || model.id}</option>
+              ))}
+            </select>
           )}
           {autoPing && (
             <Tooltip text={autoPingTooltip}>

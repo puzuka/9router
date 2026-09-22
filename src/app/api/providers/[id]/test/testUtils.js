@@ -1,7 +1,7 @@
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isSystemOneCompatibleProvider } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
 import { CODEX_CLI_VERSION } from "open-sse/config/appConstants.js";
@@ -125,6 +125,22 @@ const OAUTH_TEST_CONFIG = {
     softFailMessage: {
       402: "Connected, but Grok Build credits are exhausted (spending limit). Add credits or upgrade SuperGrok.",
     },
+  },
+  // Freebuff — probe the session endpoint (GET never claims a session).
+  freebuff: {
+    url: "https://www.codebuff.com/api/v1/freebuff/session",
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: {
+      Accept: "application/json",
+      "User-Agent": "Bun/1.3.14",
+    },
+    acceptStatuses: [403, 404],
+    softFailMessage: {
+      403: "Connected, but Freebuff is gated (403) — country blocked or account banned.",
+    },
+    refreshable: false,
   },
 };
 
@@ -473,6 +489,36 @@ async function fetchWithConnectionProxy(url, options = {}, effectiveProxy = null
 }
 
 async function testApiKeyConnection(connection, effectiveProxy = null) {
+  // System One Compatible nodes — probe {base}/systemone with a tiny payload.
+  // 401/403 mean the key is bad; any other status proves auth worked.
+  if (isSystemOneCompatibleProvider(connection.provider)) {
+    let base = connection.providerSpecificData?.baseUrl;
+    if (!base) return { valid: false, error: "Missing base URL" };
+    base = base.trim().replace(/\/$/, "");
+    if (base.endsWith("/systemone")) base = base.slice(0, -"/systemone".length);
+    try {
+      const res = await fetchWithConnectionProxy(`${base}/systemone`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.apiKey}` },
+        body: JSON.stringify({
+          model: "jev-latest",
+          state: { task: "Connection test" },
+          questions: {
+            ping: {
+              type: "choice",
+              instructions: "Reply with ok.",
+              criteria: { ok: "Always choose ok for this connectivity probe." },
+            },
+          },
+        }),
+      }, effectiveProxy);
+      const valid = res.status !== 401 && res.status !== 403;
+      return { valid, error: valid ? null : "Invalid API key" };
+    } catch (err) {
+      return { valid: false, error: err.message };
+    }
+  }
+
   if (isOpenAICompatibleProvider(connection.provider)) {
     const modelsBase = connection.providerSpecificData?.baseUrl;
     if (!modelsBase) return { valid: false, error: "Missing base URL" };
@@ -821,6 +867,31 @@ case "llm7": {
           },
         }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key", refreshed: false };
+      }
+      case "typesafe-ai":
+      case "experiential-labs": {
+        // System One — minimal structured probe (one tiny choice question).
+        // 401/403 mean the key is bad; any other status proves auth worked.
+        const url = connection.provider === "typesafe-ai"
+          ? "https://api.typesafe.ai/v1/systemone"
+          : "https://api.experientiallabs.ai/v1/systemone";
+        const res = await fetchWithConnectionProxy(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.apiKey}` },
+          body: JSON.stringify({
+            model: "jev-latest",
+            state: { task: "Connection test" },
+            questions: {
+              ping: {
+                type: "choice",
+                instructions: "Reply with ok.",
+                criteria: { ok: "Always choose ok for this connectivity probe." },
+              },
+            },
+          }),
+        }, effectiveProxy);
+        const valid = res.status !== 401 && res.status !== 403;
+        return { valid, error: valid ? null : "Invalid API key" };
       }
       default:
         return { valid: false, error: "Provider test not supported" };

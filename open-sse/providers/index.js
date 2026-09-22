@@ -35,6 +35,9 @@ for (const entry of REGISTRY) {
   if (entry.transport) {
     PROVIDERS[entry.id] = buildTransport(entry.transport, entry.oauth);
     if (entry.transports) PROVIDERS[entry.id].transports = entry.transports;
+    // Top-level registry config that executors read off the built table (not
+    // part of the transport contract): request pacing.
+    if (entry.pacing) PROVIDERS[entry.id].pacing = entry.pacing;
   }
   if (entry.models !== undefined) PROVIDER_MODELS[entry.alias || entry.id] = entry.models.map(normalizeModel);
   if (entry.oauth) PROVIDER_OAUTH[entry.id] = entry.oauth;

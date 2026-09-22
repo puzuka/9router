@@ -69,6 +69,8 @@ export default function ProviderDetailPage() {
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
   const [providerStrategy, setProviderStrategy] = useState(null);
+  const [strictModelAssignment, setStrictModelAssignment] = useState(false);
+  const [pacingGapSeconds, setPacingGapSeconds] = useState("");
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
@@ -184,6 +186,16 @@ export default function ProviderDetailPage() {
     return levels && levels.includes(thinkingMode) ? thinkingMode : null;
   };
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
+  const assignmentModels = (() => {
+    const byId = new Map();
+    const add = (model) => { if (model?.id && !byId.has(model.id)) byId.set(model.id, model); };
+    models.forEach(add);
+    customModels.forEach((model) => {
+      if (model.providerAlias === providerStorageAlias && (model.kind || model.type || "llm") === "llm") add(model);
+    });
+    const disabled = new Set(disabledModelIds);
+    return [...byId.values()].filter((model) => !disabled.has(model.id));
+  })();
   // Union of levels across this provider's reasoning models — drives the level picker options.
   // Include custom models too (e.g. manually added gpt-5.6-sol → max).
   const providerThinkingLevels = (() => {
@@ -327,6 +339,13 @@ export default function ProviderDetailPage() {
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+      if (providerId === "freebuff") {
+        setStrictModelAssignment(override.strictModelAssignment === true);
+        // Empty string = "not set" → resolver falls back to the provider default
+        // (20s). Show the stored value, never the effective one, so the field
+        // stays a faithful mirror of what the user actually chose.
+        setPacingGapSeconds(override.pacingGapSeconds != null ? String(override.pacingGapSeconds) : "");
+      }
       // Load per-provider thinking config
       const thinkingCfg = (settingsData.providerThinking || {})[providerId] || {};
       setThinkingMode(thinkingCfg.mode || "auto");
@@ -417,6 +436,72 @@ export default function ProviderDetailPage() {
   const handleStickyLimitChange = (value) => {
     setProviderStickyLimit(value);
     saveProviderStrategy("round-robin", value);
+  };
+
+  // Persist the freebuff pacing gap (seconds). Empty clears the override so the
+  // provider default applies again — that is the "not set" contract the UI
+  // promises, so an emptied field must DELETE the key rather than store 0/NaN.
+  const handlePacingGapChange = async (value, { commit = false } = {}) => {
+    setPacingGapSeconds(value);
+    if (!commit) return;
+    try {
+      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
+      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const current = settingsData.providerStrategies || {};
+      const trimmed = String(value ?? "").trim();
+      const seconds = Number(trimmed);
+      const nextProvider = { ...(current[providerId] || {}) };
+      if (trimmed === "" || !Number.isFinite(seconds) || seconds <= 0) {
+        delete nextProvider.pacingGapSeconds;
+      } else {
+        nextProvider.pacingGapSeconds = seconds;
+      }
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerStrategies: { ...current, [providerId]: nextProvider },
+        }),
+      });
+    } catch (error) {
+      console.log("Error saving Freebuff pacing gap:", error);
+    }
+  };
+
+  const handleStrictAssignmentToggle = async (enabled) => {
+    setStrictModelAssignment(enabled);
+    try {
+      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
+      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const current = settingsData.providerStrategies || {};
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerStrategies: {
+          ...current,
+          [providerId]: { ...(current[providerId] || {}), strictModelAssignment: enabled },
+        } }),
+      });
+    } catch (error) {
+      console.log("Error saving Freebuff strict assignment:", error);
+    }
+  };
+
+  const handleModelAssignment = async (connectionId, assignedModel) => {
+    try {
+      const res = await fetch(`/api/providers/${connectionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerSpecificData: { assignedModel: assignedModel || null } }),
+      });
+      if (res.ok) {
+        setConnections((prev) => prev.map((connection) => connection.id === connectionId
+          ? { ...connection, providerSpecificData: { ...(connection.providerSpecificData || {}), assignedModel: assignedModel || null } }
+          : connection));
+      }
+    } catch (error) {
+      console.log("Error saving Freebuff model assignment:", error);
+    }
   };
 
   const saveThinkingConfig = async (mode) => {
@@ -1055,6 +1140,9 @@ export default function ProviderDetailPage() {
                   onToggle: (on) => handleAutoPingConnection(conn.id, on),
                   provider: providerId,
                 } : null}
+                modelAssignmentOptions={providerId === "freebuff" ? assignmentModels : null}
+                onModelAssignmentChange={providerId === "freebuff" ? (model) => handleModelAssignment(conn.id, model) : null}
+                strictModelAssignment={strictModelAssignment}
                 onUpdateProxy={async (proxyPoolId) => {
                   try {
                     const res = await fetch(`/api/providers/${conn.id}`, {
@@ -1596,6 +1684,53 @@ export default function ProviderDetailPage() {
                   </div>
                 )}
               </div>
+              {providerId === "freebuff" && (
+                <div className="flex w-full flex-col gap-3 rounded-lg border border-border bg-surface/60 p-3 sm:flex-row sm:items-stretch sm:gap-4">
+                  <div className="flex flex-1 flex-col gap-1.5 border-b border-border/60 pb-3 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[16px] text-text-muted">shield</span>
+                      <span className="text-xs font-medium text-text-main">Strict Model Assignment</span>
+                      <Toggle size="sm" checked={strictModelAssignment} onChange={handleStrictAssignmentToggle} />
+                    </div>
+                    <p className="text-[10px] leading-relaxed text-text-muted">
+                      Only accounts assigned to a model may serve it.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2 text-xs font-medium text-text-main">
+                        <span className="material-symbols-outlined text-[16px] text-text-muted">schedule</span>
+                        Pacing Gap
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min={1}
+                          value={pacingGapSeconds}
+                          onChange={(e) => handlePacingGapChange(e.target.value)}
+                          onBlur={(e) => handlePacingGapChange(e.target.value, { commit: true })}
+                          placeholder="20"
+                          aria-label="Pacing gap in seconds"
+                          // w-20, not w-16: measured in a real browser, w-16 clips
+                          // its own text at 5 digits (scrollWidth 69 > clientWidth
+                          // 62), so a value like 99999 would render cut off. w-20
+                          // fits every realistic value up to 6 digits with room
+                          // for the stepper.
+                          className="w-20 shrink-0 rounded-md border border-border bg-background px-2 py-1 text-right text-xs tabular-nums focus:border-primary focus:outline-none"
+                        />
+                        <span className="text-xs text-text-muted">sec</span>
+                      </div>
+                    </div>
+                    <p className="text-[10px] leading-relaxed text-text-muted">
+                      Minimum idle gap between two requests on one account.{" "}
+                      {String(pacingGapSeconds).trim() === "" && (
+                        <span className="rounded bg-primary/10 px-1 py-px font-medium text-primary">default 20s</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
+import AddCompatibleModal from "@/app/(dashboard)/dashboard/providers/components/AddCompatibleModal";
 
 // Kinds that support combos (currently disabled for image/tts — temporarily hidden).
 // webSearch/webFetch handled by /web page.
@@ -142,8 +143,10 @@ export default function MediaProviderKindPage() {
   const router = useRouter();
   const [connections, setConnections] = useState([]);
   const [customNodes, setCustomNodes] = useState([]);
+  const [systemOneNodes, setSystemOneNodes] = useState([]);
   const [combos, setCombos] = useState([]);
   const [showAddCustomEmbedding, setShowAddCustomEmbedding] = useState(false);
+  const [showAddSystemOneCompatible, setShowAddSystemOneCompatible] = useState(false);
 
   // webSearch/webFetch listing pages are merged into /web
   useEffect(() => {
@@ -154,6 +157,7 @@ export default function MediaProviderKindPage() {
 
   const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kind);
   const isEmbedding = kind === "embedding";
+  const isSystemOne = kind === "systemOne";
   const supportsCombo = COMBO_KINDS.has(kind);
 
   useEffect(() => {
@@ -168,13 +172,19 @@ export default function MediaProviderKindPage() {
         .then((d) => setCustomNodes((d.nodes || []).filter((n) => n.type === "custom-embedding")))
         .catch(() => {});
     }
+    if (isSystemOne) {
+      fetch("/api/provider-nodes", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => setSystemOneNodes((d.nodes || []).filter((n) => n.type === "systemone-compatible")))
+        .catch(() => {});
+    }
     if (supportsCombo) {
       fetch("/api/combos", { cache: "no-store" })
         .then((r) => r.json())
         .then((d) => setCombos(d.combos || []))
         .catch(() => {});
     }
-  }, [isEmbedding, supportsCombo, kindConfig]);
+  }, [isEmbedding, isSystemOne, supportsCombo, kindConfig]);
 
   if (!kindConfig) return notFound();
 
@@ -189,7 +199,15 @@ export default function MediaProviderKindPage() {
     textIcon: "CE",
   }));
 
-  const allProviders = [...providers, ...customProviders];
+  // System One Compatible nodes (user-supplied base URL + API key pool)
+  const systemOneNodeProviders = systemOneNodes.map((n) => ({
+    id: n.id,
+    name: n.name || "System One Compatible",
+    color: "#2563EB",
+    textIcon: "SO",
+  }));
+
+  const allProviders = [...providers, ...customProviders, ...systemOneNodeProviders];
 
   const handleToggleProvider = async (providerId, newActive) => {
     const providerConns = connections.filter((c) => c.provider === providerId);
@@ -229,7 +247,7 @@ export default function MediaProviderKindPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {(isEmbedding || supportsCombo) && (
+      {(isEmbedding || supportsCombo || isSystemOne) && (
         <div className="flex items-center justify-end gap-2">
           {supportsCombo && (
             <Button size="sm" icon="add" onClick={handleCreateCombo}>Create Combo</Button>
@@ -237,6 +255,11 @@ export default function MediaProviderKindPage() {
           {isEmbedding && (
             <Button size="sm" icon="add" onClick={() => setShowAddCustomEmbedding(true)}>
               Add Custom Embedding
+            </Button>
+          )}
+          {isSystemOne && (
+            <Button size="sm" icon="add" onClick={() => setShowAddSystemOneCompatible(true)}>
+              Add System One Compatible
             </Button>
           )}
         </div>
@@ -281,6 +304,18 @@ export default function MediaProviderKindPage() {
           onCreated={(node) => {
             setCustomNodes((prev) => [...prev, node]);
             setShowAddCustomEmbedding(false);
+          }}
+        />
+      )}
+
+      {isSystemOne && (
+        <AddCompatibleModal
+          variant="systemone"
+          isOpen={showAddSystemOneCompatible}
+          onClose={() => setShowAddSystemOneCompatible(false)}
+          onCreated={(node) => {
+            setSystemOneNodes((prev) => [...prev, node]);
+            setShowAddSystemOneCompatible(false);
           }}
         />
       )}

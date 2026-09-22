@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createProviderNode, getProviderNodes } from "@/models";
-import { OPENAI_COMPATIBLE_PREFIX, ANTHROPIC_COMPATIBLE_PREFIX, CUSTOM_EMBEDDING_PREFIX } from "@/shared/constants/providers";
+import { OPENAI_COMPATIBLE_PREFIX, ANTHROPIC_COMPATIBLE_PREFIX, CUSTOM_EMBEDDING_PREFIX, SYSTEMONE_COMPATIBLE_PREFIX } from "@/shared/constants/providers";
 import { generateId } from "@/shared/utils";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +15,10 @@ const ANTHROPIC_COMPATIBLE_DEFAULTS = {
 
 const CUSTOM_EMBEDDING_DEFAULTS = {
   baseUrl: "https://api.openai.com/v1",
+};
+
+const SYSTEMONE_COMPATIBLE_DEFAULTS = {
+  baseUrl: "https://api.typesafe.ai/v1",
 };
 
 // GET /api/provider-nodes - List all provider nodes
@@ -89,6 +93,25 @@ export async function POST(request) {
       const node = await createProviderNode({
         id: `${ANTHROPIC_COMPATIBLE_PREFIX}${generateId()}`,
         type: "anthropic-compatible",
+        prefix: prefix.trim(),
+        baseUrl: sanitizedBaseUrl,
+        name: name.trim(),
+      });
+      return NextResponse.json({ node }, { status: 201 });
+    }
+
+    if (nodeType === "systemone-compatible") {
+      // Sanitize Base URL: remove trailing slash and trailing /systemone — the
+      // runtime appends /systemone itself, so a pasted full endpoint must not
+      // double up.
+      let sanitizedBaseUrl = (baseUrl || SYSTEMONE_COMPATIBLE_DEFAULTS.baseUrl).trim().replace(/\/$/, "");
+      if (sanitizedBaseUrl.endsWith("/systemone")) {
+        sanitizedBaseUrl = sanitizedBaseUrl.slice(0, -"/systemone".length);
+      }
+
+      const node = await createProviderNode({
+        id: `${SYSTEMONE_COMPATIBLE_PREFIX}${generateId()}`,
+        type: "systemone-compatible",
         prefix: prefix.trim(),
         baseUrl: sanitizedBaseUrl,
         name: name.trim(),

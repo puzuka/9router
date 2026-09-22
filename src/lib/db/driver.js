@@ -59,6 +59,16 @@ async function trySqlJs() {
 
 async function initAdapter() {
   ensureDirs();
+  // Health gate before any adapter binds to the file: a corrupt DB opens fine
+  // and then fails every query at runtime (SQLITE_CORRUPT, twice in the wild).
+  // When corrupt, quarantine + swap in the newest good auto backup. Fail-open:
+  // a gate error leaves the pre-gate behavior untouched.
+  try {
+    const { ensureHealthyDataFile } = await import("./health.js");
+    await ensureHealthyDataFile();
+  } catch (e) {
+    console.warn(`[DB] health gate failed (continuing): ${e?.message || e}`);
+  }
   // Order per runtime:
   //   Bun:  bun:sqlite → sql.js
   //   Node: better-sqlite3 → node:sqlite (≥22.5) → sql.js

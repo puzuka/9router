@@ -158,6 +158,46 @@ export async function POST(request) {
       return NextResponse.json({ valid: false, error: getModelsErrorMessage(res.status) });
     }
 
+    // System One Compatible Validation - POST {base}/systemone with a tiny probe.
+    // Only 401/403 mean the key is bad; any other status proves auth worked.
+    if (type === "systemone-compatible") {
+      let normalizedBase = baseUrl.trim().replace(/\/$/, "");
+      if (normalizedBase.endsWith("/systemone")) {
+        normalizedBase = normalizedBase.slice(0, -"/systemone".length);
+      }
+
+      const res = await fetchWithTimeout(`${normalizedBase}/systemone`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: modelId?.trim() || "jev-latest",
+          state: { task: "Connection test" },
+          questions: {
+            ping: {
+              type: "choice",
+              instructions: "Reply with ok.",
+              criteria: { ok: "Always choose ok for this connectivity probe." },
+            },
+          },
+        })
+      });
+      if (res.ok) {
+        return NextResponse.json({ valid: true, method: "systemone" });
+      }
+      if (res.status === 401 || res.status === 403) {
+        return NextResponse.json({ valid: false, error: "API key unauthorized" });
+      }
+      const errBody = await res.text().catch(() => "");
+      return NextResponse.json({
+        valid: false,
+        error: `System One request failed (${res.status})${errBody ? `: ${errBody.slice(0, 200)}` : ""}`,
+        method: "systemone"
+      });
+    }
+
     // OpenAI Compatible Validation (Default)
     const modelsUrl = `${baseUrl.replace(/\/$/, "")}/models`;
     const res = await fetchWithTimeout(modelsUrl, {
