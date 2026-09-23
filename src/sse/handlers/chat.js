@@ -15,7 +15,6 @@ import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
-import { computeFreebuffWaitMs } from "open-sse/shared/freebuffPacing.js";
 import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
@@ -238,21 +237,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
-        // Freebuff-only bounded wait. With a single account (or every account
-        // pacing/model-locked), waiting out the shortest lock beats failing the
-        // request with 429 — there is nobody to fall back to. Other providers
-        // keep the fail-fast behavior below.
-        if (provider === "freebuff") {
-          const waitMs = computeFreebuffWaitMs(credentials.retryAfter);
-          if (waitMs > 0) {
-            log.info("CHAT", `[${provider}/${model}] all accounts locked — waiting ${Math.ceil(waitMs / 1000)}s to retry same account`);
-            await new Promise((resolve) => setTimeout(resolve, waitMs));
-            // Drop accumulated excludes so the same account can serve again now
-            // that its pacing gap + model lock have elapsed.
-            excludeConnectionIds.clear();
-            continue;
-          }
-        }
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
         log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);

@@ -126,22 +126,6 @@ const OAUTH_TEST_CONFIG = {
       402: "Connected, but Grok Build credits are exhausted (spending limit). Add credits or upgrade SuperGrok.",
     },
   },
-  // Freebuff — probe the session endpoint (GET never claims a session).
-  freebuff: {
-    url: "https://www.codebuff.com/api/v1/freebuff/session",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: {
-      Accept: "application/json",
-      "User-Agent": "Bun/1.3.14",
-    },
-    acceptStatuses: [403, 404],
-    softFailMessage: {
-      403: "Connected, but Freebuff is gated (403) — country blocked or account banned.",
-    },
-    refreshable: false,
-  },
 };
 
 /**

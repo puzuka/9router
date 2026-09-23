@@ -265,31 +265,6 @@ export const PROVIDER_CAPABILITIES = {
     "qfmodel":        { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },  // Qwen3.8-Flash
     "qmodel_38max":   { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },      // Qwen3.8-Max
   },
-  // Freebuff (Codebuff) — the picker catalog is server-authoritative, and its
-  // window table (common/src/constants/freebuff-model-context-windows) is what
-  // the official client budgets against, so these mirror it rather than the
-  // generic patterns: `*gpt-5*` reads 400K for Luna where freebuff budgets 1M,
-  // and Luna's vendor card (1.05M) is deliberately rounded DOWN to 1M upstream —
-  // "guessing high wedges a thread forever, guessing low only prunes early".
-  // Only DELTAS vs the pattern tables are meaningful here, but a provider entry
-  // replaces the pattern result outright, so each row restates what it needs.
-  // Solar Pro 4 is listed text-only upstream (and moved off the ZDR endpoint on
-  // 2026-09-09), so vision is switched OFF; DeepSeek V4 Flash became natively
-  // multimodal on 2026-09-10 when the undated wire id moved to V4.1 Flash.
-  // MiMo 2.5 and Claude Fable 5 are absent on purpose: freebuff publishes no
-  // window for them, and its 131072 floor is a fallback for uncatalogued ids,
-  // not a measured limit for a model it serves direct.
-  "freebuff": {
-    "z-ai/glm-5.3-flash":                { vision: true, videoInput: true, reasoning: true, thinkingFormat: "zai", contextWindow: 1000000, maxOutput: 131072 },
-    "deepseek/deepseek-v4-flash":        { vision: true, reasoning: true, thinkingFormat: "deepseek", contextWindow: 1048576, maxOutput: 384000 },
-    "openai/gpt-5.6-luna":               { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
-    "upstage/solar-pro4":                { vision: false, reasoning: true, thinkingFormat: "openai", contextWindow: 500000, maxOutput: 100000 },
-    "meta/muse-spark-1.2-contributor":   { vision: false, reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 131072 },
-    // 1.3 is the live row (1.2 was retired from the pickers 2026-09-02). Same
-    // Meta card and the same 1,048,576-token context as 1.2, so the window here
-    // stays at the shared value rather than becoming a second number to keep.
-    "meta/muse-spark-1.3-contributor":   { vision: false, reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 131072 },
-  },
   // Poolside Laguna — OpenAI-compatible, all reasoning-capable (32K max output).
   "poolside": {
     "laguna-s-2.1":  { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 32000 },

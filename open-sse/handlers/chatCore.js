@@ -397,15 +397,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       return createErrorResult(499, "Request aborted");
     }
     const errMsg = formatProviderError(error, provider, model, errorStatus);
-    // Pacing rejects are an expected control-flow signal (the request waits and
-    // retries the same account) — log them quietly, no scary error + stack.
-    const isPacingSkip = errorStatus === 429 && /Freebuff pacing/i.test(errMsg);
     if (log?.errorLine) {
-      if (isPacingSkip) {
-        log.info?.(reqTag, `pacing skip · ${provider}/${model} · ${error.message || "request too soon"}`);
-      } else {
-        log.errorLine(reqTag, "✗", `ERROR ${errorStatus} · ${provider}/${model} · ${Date.now() - requestStartTime}ms\n    ${errMsg}${error.stack ? `\n    ${error.stack}` : ""}`);
-      }
+      log.errorLine(reqTag, "✗", `ERROR ${errorStatus} · ${provider}/${model} · ${Date.now() - requestStartTime}ms\n    ${errMsg}${error.stack ? `\n    ${error.stack}` : ""}`);
     }
     return createErrorResult(errorStatus, errMsg, error.resetsAtMs);
   }

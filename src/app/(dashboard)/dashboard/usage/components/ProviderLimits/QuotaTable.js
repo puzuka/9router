@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatFreebucksPrice, formatResetTime, getRemainingPercentage } from "./utils";
+import { formatResetTime, getRemainingPercentage } from "./utils";
 
 const PAGE_SIZE = 10;
 
@@ -175,20 +175,6 @@ export default function QuotaTable({
                   <div className={`${nameText} font-medium text-text-primary truncate`}>
                     {quota.name}
                   </div>
-                  {quota.price !== undefined && (
-                    <div
-                      className="text-[9px] leading-tight text-text-muted truncate"
-                      title={quota.priceNote || ""}
-                    >
-                      {formatFreebucksPrice(quota.price)}
-                      {quota.peak ? (
-                        <span className="ml-1 rounded bg-amber-500/20 px-1 py-px font-semibold text-amber-600 dark:text-amber-400" title={quota.priceNote || `Peak pricing: +${quota.peakSurcharge ?? 0} Freebucks a session while the provider charges double, back later.`}>
-                          Peak pricing
-                        </span>
-                      ) : null}
-                      {quota.priceNote ? ` · ${quota.priceNote}` : ""}
-                    </div>
-                  )}
                 </div>
               </div>
 

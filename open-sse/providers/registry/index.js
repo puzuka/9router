@@ -123,7 +123,6 @@ import p119 from "./selfhosted-embedding.js";
 import p120 from "./fish-audio.js";
 import p121 from "./alitp-intl.js";
 import p122 from "./xquik.js";
-import p124 from "./freebuff.js";
 import p125 from "./typesafe-ai.js";
 import p126 from "./experiential-labs.js";
 export default [
@@ -249,7 +248,6 @@ export default [
   p120,
   p121,
   p122,
-  p124,
   p125,
   p126,
 ];
