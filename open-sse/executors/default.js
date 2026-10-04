@@ -6,6 +6,7 @@ import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
+import { injectStartPlanSystem } from "../utils/startPlanSystemInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
@@ -42,6 +43,12 @@ const HEADER_HOOKS = {
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
   clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
+  // ZCode start-plan gateway reads Bearer in addition to x-api-key (ZCode:
+  // withAnthropicAuthorizationHeader); accessToken holds the ZCode JWT.
+  glmStartAuthorization: (h, c) => {
+    const token = c.apiKey || c.accessToken;
+    if (token) h["Authorization"] = `Bearer ${token}`;
+  },
 };
 
 // Config-driven OAuth refresh grants — derived from registry oauth.refresh.
@@ -67,7 +74,7 @@ export class DefaultExecutor extends BaseExecutor {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }
 
-  transformRequest(model, body) {
+  transformRequest(model, body, stream, credentials) {
     const transformed = this.applyJsonSchemaFallback(body);
 
     if (transformed && typeof transformed === "object") {
@@ -78,7 +85,11 @@ export class DefaultExecutor extends BaseExecutor {
       stripUnsupportedParams(this.provider, model, transformed);
     }
 
-    return injectReasoningContent({ provider: this.provider, model, body: transformed });
+    return injectStartPlanSystem({
+      provider: this.provider,
+      body: injectReasoningContent({ provider: this.provider, model, body: transformed }),
+      credentials,
+    });
   }
 
   // Fallback json_schema → json_object for openai-compatible providers without native Structured Output.

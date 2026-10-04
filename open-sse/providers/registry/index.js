@@ -39,6 +39,7 @@ import p36 from "./github.js";
 import p37 from "./gitlab.js";
 import p38 from "./glm-cn.js";
 import p39 from "./glm.js";
+import p127 from "./glm-start.js";
 import p40 from "./google-pse.js";
 import p41 from "./google-tts.js";
 import p42 from "./grok-cli.js";
@@ -250,4 +251,5 @@ export default [
   p122,
   p125,
   p126,
+  p127,
 ];

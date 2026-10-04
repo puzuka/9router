@@ -1037,5 +1037,24 @@
       "preserveCacheControl": true
     },
     "format": "openai"
+  },
+  "glm-start": {
+    "baseUrl": "https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages",
+    "format": "claude",
+    "headers": {
+      "Anthropic-Version": "2023-06-01",
+      "User-Agent": "ZCode/3.14.3",
+      "X-ZCode-App-Version": "3.14.3",
+      "X-Title": "Z Code@electron",
+      "HTTP-Referer": "https://zcode.z.ai"
+    },
+    "auth": {
+      "combined": true,
+      "header": "x-api-key",
+      "scheme": "raw",
+      "hooks": [
+        "glmStartAuthorization"
+      ]
+    }
   }
 }

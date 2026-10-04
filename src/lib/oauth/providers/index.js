@@ -26,6 +26,8 @@ import kimchi from "./kimchi.js";
 import trae from "./trae.js";
 import windsurf from "./windsurf.js";
 import zed from "./zed.js";
+import glm from "./glm.js";
+import glmStart from "./glm-start.js";
 
 // Provider configurations
 const PROVIDERS = {
@@ -51,6 +53,8 @@ const PROVIDERS = {
   trae,
   windsurf,
   zed,
+  glm,
+  "glm-start": glmStart,
 };
 
 export { PROVIDERS };

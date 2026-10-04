@@ -701,6 +701,43 @@ exports[`GOLDEN buildHeaders (default executor providers) > glm-cn → headers (
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > glm-start → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Anthropic-Version": "2023-06-01",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://zcode.z.ai",
+    "User-Agent": "ZCode/3.14.3",
+    "X-Title": "Z Code@electron",
+    "X-ZCode-App-Version": "3.14.3",
+    "x-api-key": "<CRED>",
+  },
+  "nonStream": {
+    "Anthropic-Version": "2023-06-01",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://zcode.z.ai",
+    "User-Agent": "ZCode/3.14.3",
+    "X-Title": "Z Code@electron",
+    "X-ZCode-App-Version": "3.14.3",
+    "x-api-key": "<CRED>",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Anthropic-Version": "2023-06-01",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://zcode.z.ai",
+    "User-Agent": "ZCode/3.14.3",
+    "X-Title": "Z Code@electron",
+    "X-ZCode-App-Version": "3.14.3",
+    "x-api-key": "<CRED>",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > grok-cli → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -1582,6 +1619,13 @@ exports[`GOLDEN buildUrl (default executor providers) > glm-cn → url (stream +
 {
   "nonStream": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
   "stream": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > glm-start → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages",
+  "stream": "https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages",
 }
 `;
 
