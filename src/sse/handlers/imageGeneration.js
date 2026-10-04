@@ -13,7 +13,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
-import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
+import { createQuotaContext, enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 // Providers that don't require credentials (noAuth)
 const NO_AUTH_PROVIDERS = new Set(["sdwebui", "comfyui"]);
@@ -50,6 +50,7 @@ export async function handleImageGeneration(request) {
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
   const comboModels = await getComboModels(modelStr);
   if (comboModels) {
+    const quotaContext = createQuotaContext(modelStr, {}, modelStr);
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
@@ -57,7 +58,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname }),
+      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname, quotaContext }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -68,7 +69,7 @@ export async function handleImageGeneration(request) {
   return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint } = {}) {
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint, quotaContext } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -76,7 +77,7 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
 
   // noAuth providers — no credential needed
   if (NO_AUTH_PROVIDERS.has(provider)) {
-    const quota = await enforceQuota({ apiKey, provider, model });
+    const quota = await enforceQuota({ apiKey, provider, model, ...quotaContext });
     if (!quota.allowed) {
       log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
       return quota.response;
@@ -95,6 +96,9 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
         apiKey,
         endpoint,
         cost: 0,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "image" },
       });
       return result.response;
@@ -123,7 +127,7 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
     }
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-    const quota = await enforceQuota({ apiKey, provider, model, connectionId: credentials.connectionId });
+    const quota = await enforceQuota({ apiKey, provider, model, connectionId: credentials.connectionId, ...quotaContext });
     if (!quota.allowed) {
       if (shouldFallbackForQuota(quota.violation)) {
         log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
@@ -163,6 +167,9 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
         apiKey,
         endpoint,
         cost: 0,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "image" },
       });
       return result.response;

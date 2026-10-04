@@ -5,14 +5,15 @@ import {
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { getSettings, getProviderNodes } from "@/lib/localDb";
+import { getSettings, getProviderNodes, getCombos } from "@/lib/localDb";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
 import { handleSystemOneCore, findSystemOneNode, buildSystemOneNodeProvider } from "open-sse/handlers/systemOneCore.js";
+import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { checkAndRefreshToken } from "../services/tokenRefresh.js";
-import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
+import { createQuotaContext, enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 /**
  * Handle System One request for the SSE/Next.js server.
@@ -73,6 +74,35 @@ export async function handleSystemOne(request) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: questions (object)");
   }
 
+  // Combo expansion: providerInput may be a combo name → run fallback/round-robin across providers
+  const combos = await getCombos();
+  const comboModels = getComboModelsFromData(providerInput, combos);
+  if (comboModels) {
+    const quotaContext = createQuotaContext(providerInput, {}, providerInput);
+    const comboStrategies = settings.comboStrategies || {};
+    const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
+    const comboStickyLimit = settings.comboStickyRoundRobinLimit;
+    log.info("SYSTEMONE", `Combo "${providerInput}" with ${comboModels.length} providers (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
+    return handleComboChat({
+      body,
+      models: comboModels,
+      handleSingleModel: (b, m) => handleSingleProviderSystemOne(b, m, request, apiKey, settings, quotaContext),
+      log,
+      comboName: providerInput,
+      comboStrategy,
+      comboStickyLimit
+    });
+  }
+
+  return handleSingleProviderSystemOne(body, providerInput, request, apiKey, settings);
+}
+
+/**
+ * Resolve and serve one System One provider ("provider", "provider/jev-latest",
+ * or a System One Compatible node id/prefix). Same credential + fallback loop
+ * as before, extracted so the combo path can call it per combo member.
+ */
+async function handleSingleProviderSystemOne(body, providerInput, request, apiKey, settings, quotaContext = null) {
   // Split optional per-request model: "provider" or "provider/jev-latest"
   const [providerPart, ...modelRest] = providerInput.split("/");
   const requestedModel = modelRest.join("/") || undefined;
@@ -151,7 +181,7 @@ export async function handleSystemOne(request) {
     log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
 
     const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
-    const quota = await enforceQuota({ apiKey, provider: providerId, connectionId: credentials.connectionId });
+    const quota = await enforceQuota({ apiKey, provider: providerId, model, connectionId: credentials.connectionId, ...quotaContext });
     if (!quota.allowed) {
       if (shouldFallbackForQuota(quota.violation)) {
         log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
@@ -181,6 +211,9 @@ export async function handleSystemOne(request) {
         apiKey,
         endpoint: new URL(request.url).pathname,
         usage: result.data?.usage,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "systemOne" },
       });
       return result.response;

@@ -27,12 +27,13 @@ const METRIC_OPTIONS = [
 ];
 
 const MODEL_MODE_OPTIONS = [
-  { value: "all", label: "All models" },
-  { value: "include", label: "Only selected models" },
-  { value: "exclude", label: "All except selected models" },
+  { value: "all", label: "All models and combos" },
+  { value: "include", label: "Only selected models or combos" },
+  { value: "exclude", label: "All except selected models or combos" },
 ];
 
-const EMPTY_TARGETS = { apiKeys: [], providers: [], providerConnections: [], models: [] };
+const EMPTY_TARGETS = { apiKeys: [], providers: [], providerConnections: [], models: [], combos: [] };
+const EMPTY_MODELS = { mode: "all", include: [], exclude: [], includeCombos: [], excludeCombos: [] };
 
 function emptyForm() {
   return {
@@ -41,7 +42,7 @@ function emptyForm() {
     period: "24h",
     metric: "requests",
     limitValue: "100",
-    models: { mode: "all", include: [], exclude: [] },
+    models: { ...EMPTY_MODELS, include: [], exclude: [], includeCombos: [], excludeCombos: [] },
     description: "",
     enabled: true,
   };
@@ -92,36 +93,58 @@ function getTargetOptions(scopeType, targets) {
 }
 
 function getModelOptions(targets) {
-  return (targets.models || []).map((model) => ({
+  const models = (targets.models || []).map((model) => ({
+    key: `model:${model.id}`,
     value: model.id,
+    type: "model",
     label: model.name || model.id,
     providers: Array.isArray(model.providers) ? model.providers : [],
   }));
+  const combos = (targets.combos || []).map((combo) => ({
+    key: `combo:${combo.id || combo.name}`,
+    value: combo.id || combo.name,
+    type: "combo",
+    label: combo.name || combo.id,
+    kind: combo.kind || "llm",
+    memberCount: Array.isArray(combo.models) ? combo.models.length : 0,
+    providers: [],
+  }));
+  return [...combos, ...models].sort((a, b) => a.value.localeCompare(b.value));
 }
 
 function getModelListForMode(models) {
-  if (models.mode === "include") return models.include || [];
-  if (models.mode === "exclude") return models.exclude || [];
+  if (models.mode === "include") return [
+    ...(models.include || []).map((value) => ({ key: `model:${value}`, value, type: "model" })),
+    ...(models.includeCombos || []).map((value) => ({ key: `combo:${value}`, value, type: "combo" })),
+  ];
+  if (models.mode === "exclude") return [
+    ...(models.exclude || []).map((value) => ({ key: `model:${value}`, value, type: "model" })),
+    ...(models.excludeCombos || []).map((value) => ({ key: `combo:${value}`, value, type: "combo" })),
+  ];
   return [];
 }
 
 function setModelListForMode(models, list) {
-  if (models.mode === "include") return { ...models, include: list };
-  if (models.mode === "exclude") return { ...models, exclude: list };
+  const modelValues = list.filter((item) => item.type === "model").map((item) => item.value);
+  const comboValues = list.filter((item) => item.type === "combo").map((item) => item.value);
+  if (models.mode === "include") return { ...models, include: modelValues, includeCombos: comboValues };
+  if (models.mode === "exclude") return { ...models, exclude: modelValues, excludeCombos: comboValues };
   return models;
 }
 
-function toggleModel(models, model) {
+function toggleModel(models, option) {
   const list = getModelListForMode(models);
-  const next = list.includes(model) ? list.filter((item) => item !== model) : [...list, model];
+  const next = list.some((item) => item.key === option.key)
+    ? list.filter((item) => item.key !== option.key)
+    : [...list, { key: option.key, value: option.value, type: option.type }];
   return setModelListForMode(models, next);
 }
 
 function summarizeModels(models) {
-  if (!models || models.mode === "all") return "All models";
+  if (!models || models.mode === "all") return "All models and combos";
   const list = getModelListForMode(models);
-  if (models.mode === "include") return list.length ? `${list.length} selected` : "No models selected";
-  return list.length ? `All except ${list.length}` : "All models";
+  if (models.mode === "include") return list.length ? `${list.length} selected` : "No models or combos selected";
+  return list.length ? `All except ${list.length}` : "All models and combos";
 }
 
 function SelectedModelChips({ models, modelOptionMap, limit = Infinity, onRemove, className = "" }) {
@@ -134,26 +157,30 @@ function SelectedModelChips({ models, modelOptionMap, limit = Infinity, onRemove
   return (
     <div className={`flex min-w-0 flex-wrap gap-1.5 ${className}`}>
       {visible.map((model) => {
-        const option = modelOptionMap?.get(model);
-        const label = option?.label && option.label !== model ? option.label : "";
+        const option = modelOptionMap?.get(model.key);
+        const label = option?.label && option.label !== model.value ? option.label : "";
         const providerText = option?.providers?.length ? option.providers.join(", ") : "";
-        const title = [model, label, providerText].filter(Boolean).join(" / ");
+        const typeLabel = model.type === "combo" ? "Combo" : "Model";
+        const title = [typeLabel, model.value, label, providerText].filter(Boolean).join(" / ");
 
         return (
           <span
-            key={model}
+            key={model.key}
             title={title}
             className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2 py-1 text-[11px] text-text-main"
           >
-            <span className="max-w-[180px] truncate font-mono">{model}</span>
+            {model.type === "combo" && (
+              <span aria-hidden="true" className="material-symbols-outlined text-[13px] text-primary">layers</span>
+            )}
+            <span className="max-w-[180px] truncate font-mono">{model.value}</span>
             {onRemove && (
               <button
                 type="button"
                 onClick={() => onRemove(model)}
-                aria-label={`Remove ${model}`}
+                aria-label={`Remove ${model.value}`}
                 className="-mr-1 flex size-4 items-center justify-center rounded-full text-text-muted hover:bg-surface hover:text-text-main"
               >
-                <span className="material-symbols-outlined text-[13px]">close</span>
+                <span aria-hidden="true" className="material-symbols-outlined text-[13px]">close</span>
               </button>
             )}
           </span>
@@ -180,6 +207,8 @@ function normalizeForm(rule) {
       mode: rule.models?.mode || "all",
       include: Array.isArray(rule.models?.include) ? rule.models.include : [],
       exclude: Array.isArray(rule.models?.exclude) ? rule.models.exclude : [],
+      includeCombos: Array.isArray(rule.models?.includeCombos) ? rule.models.includeCombos : [],
+      excludeCombos: Array.isArray(rule.models?.excludeCombos) ? rule.models.excludeCombos : [],
     },
     description: rule.description || "",
     enabled: rule.enabled !== false,
@@ -246,7 +275,7 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
   const [modelSearch, setModelSearch] = useState("");
   const targetOptions = useMemo(() => getTargetOptions(form.scopeType, targets), [form.scopeType, targets]);
   const modelOptions = useMemo(() => getModelOptions(targets), [targets]);
-  const modelOptionMap = useMemo(() => new Map(modelOptions.map((model) => [model.value, model])), [modelOptions]);
+  const modelOptionMap = useMemo(() => new Map(modelOptions.map((model) => [model.key, model])), [modelOptions]);
   const filteredModelOptions = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
     if (!query) return modelOptions;
@@ -257,7 +286,7 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
   }, [modelOptions, modelSearch]);
   const isEdit = !!rule;
   const selectedModels = getModelListForMode(form.models);
-  const selectedModelSet = useMemo(() => new Set(selectedModels), [selectedModels]);
+  const selectedModelSet = useMemo(() => new Set(selectedModels.map((model) => model.key)), [selectedModels]);
   const modelSelectionValid = form.models.mode !== "include" || selectedModels.length > 0;
   const canSave = (form.scopeType === "global" || form.scopeId) && Number(form.limitValue) > 0 && modelSelectionValid;
 
@@ -274,10 +303,11 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
     setModelSearch("");
   };
   const setSelectedModels = (list) => {
-    setField("models", setModelListForMode(form.models, [...new Set(list)]));
+    const deduped = [...new Map(list.map((item) => [item.key, item])).values()];
+    setField("models", setModelListForMode(form.models, deduped));
   };
   const selectVisibleModels = () => {
-    setSelectedModels([...selectedModels, ...filteredModelOptions.map((model) => model.value)]);
+    setSelectedModels([...selectedModels, ...filteredModelOptions]);
   };
   const clearSelectedModels = () => {
     setSelectedModels([]);
@@ -345,6 +375,7 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
         />
         <div className="flex items-end pb-2">
           <Toggle
+            ariaLabel="Enable quota rule"
             checked={form.enabled}
             onChange={(enabled) => setField("enabled", enabled)}
             label="Enabled"
@@ -359,7 +390,7 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
         />
         <div className="sm:col-span-2 rounded-lg border border-border bg-surface/60 p-3">
           <Select
-            label="Models"
+            label="Models & Combos"
             value={form.models.mode}
             onChange={(event) => setModelMode(event.target.value)}
             options={MODEL_MODE_OPTIONS}
@@ -370,12 +401,13 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
               <div className="border-b border-border-subtle p-2">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <div className="relative min-w-0 flex-1">
-                    <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[16px] text-text-muted">search</span>
+                    <span aria-hidden="true" className="material-symbols-outlined pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[16px] text-text-muted">search</span>
                     <input
                       type="search"
+                      aria-label="Search models and combos"
                       value={modelSearch}
                       onChange={(event) => setModelSearch(event.target.value)}
-                      placeholder="Search model id, name, or provider"
+                      placeholder="Search model or combo"
                       className="w-full rounded-[8px] border border-transparent bg-surface-2 py-2 pl-8 pr-3 text-[16px] text-text-main placeholder-text-muted/70 focus:border-brand-500/40 focus:outline-none focus:ring-2 focus:ring-brand-500/30 sm:text-sm"
                     />
                   </div>
@@ -400,6 +432,7 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
                 </div>
                 <p className="mt-2 text-xs text-text-muted">
                   {selectedModels.length} selected / {filteredModelOptions.length} shown / {modelOptions.length} available
+                  {form.models.mode === "include" && selectedModels.length === 0 ? " — select at least one model or combo" : ""}
                 </p>
                 <SelectedModelChips
                   models={form.models}
@@ -410,26 +443,32 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
               </div>
               <div className="max-h-56 overflow-y-auto p-2">
                 {modelOptions.length === 0 ? (
-                  <p className="px-2 py-3 text-sm text-text-muted">No model list available.</p>
+                  <p className="px-2 py-3 text-sm text-text-muted">No model or combo list available.</p>
                 ) : filteredModelOptions.length === 0 ? (
-                  <p className="px-2 py-3 text-sm text-text-muted">No models match this search.</p>
-                ) : filteredModelOptions.map((model) => {
-                  const providerText = model.providers.length ? model.providers.join(", ") : "";
+                  <p className="px-2 py-3 text-sm text-text-muted">No models or combos match this search.</p>
+                ) : filteredModelOptions.map((option) => {
+                  const providerText = option.providers.length ? option.providers.join(", ") : "";
+                  const typeText = option.type === "combo"
+                    ? `Combo · ${option.memberCount} ${option.memberCount === 1 ? "model" : "models"}`
+                    : "Model";
                   return (
-                    <label key={model.value} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
+                    <label key={option.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-2">
                       <input
                         type="checkbox"
-                        checked={selectedModelSet.has(model.value)}
-                        onChange={() => setField("models", toggleModel(form.models, model.value))}
+                        checked={selectedModelSet.has(option.key)}
+                        onChange={() => setField("models", toggleModel(form.models, option))}
                         className="size-4 accent-primary"
                       />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate font-mono text-xs text-text-main">{model.value}</span>
-                        {(model.label !== model.value || providerText) && (
-                          <span className="block truncate text-[11px] text-text-muted">
-                            {[model.label !== model.value ? model.label : "", providerText].filter(Boolean).join(" / ")}
-                          </span>
-                        )}
+                        <span className="flex items-center gap-2">
+                          {option.type === "combo" && (
+                            <span className="material-symbols-outlined shrink-0 text-[14px] text-primary" aria-hidden="true">layers</span>
+                          )}
+                          <span className="block truncate font-mono text-xs text-text-main">{option.value}</span>
+                        </span>
+                        <span className="block truncate text-[11px] text-text-muted">
+                          {[typeText, option.label !== option.value ? option.label : "", providerText].filter(Boolean).join(" / ")}
+                        </span>
                       </span>
                     </label>
                   );
@@ -438,7 +477,7 @@ function QuotaRuleModal({ isOpen, onClose, onSave, rule, targets, saving }) {
             </div>
           )}
           <p className="mt-2 text-xs text-text-muted">
-            {form.models.mode === "include" ? "This rule only counts selected models." : form.models.mode === "exclude" ? "This rule counts all models except selected models." : "This rule counts every model."}
+            {form.models.mode === "include" ? "This rule only counts selected models and combo requests." : form.models.mode === "exclude" ? "This rule counts all traffic except selected models and combo requests." : "This rule counts every model and combo request."}
           </p>
         </div>
       </div>
@@ -458,7 +497,7 @@ function RuleRow({ rule, modelOptionMap, onEdit, onDelete, onToggle }) {
         </div>
         <p className="truncate text-sm font-semibold text-text-main">{rule.description || rule.scopeName || rule.scopeId}</p>
         <p className="truncate text-xs text-text-muted">{rule.scopeName || rule.scopeId}</p>
-        <p className="truncate text-xs text-text-muted">Models: {summarizeModels(rule.models)}</p>
+        <p className="truncate text-xs text-text-muted">Models &amp; Combos: {summarizeModels(rule.models)}</p>
         <SelectedModelChips models={rule.models} modelOptionMap={modelOptionMap} limit={3} className="mt-2" />
       </div>
 
@@ -495,22 +534,29 @@ function RuleRow({ rule, modelOptionMap, onEdit, onDelete, onToggle }) {
       </div>
 
       <div className="flex items-center justify-end gap-2">
-        <Toggle size="sm" checked={rule.enabled} onChange={(enabled) => onToggle(rule, enabled)} />
+        <Toggle
+          size="sm"
+          ariaLabel={`${rule.enabled ? "Disable" : "Enable"} quota rule ${rule.description || rule.scopeName || rule.id}`}
+          checked={rule.enabled}
+          onChange={(enabled) => onToggle(rule, enabled)}
+        />
         <button
           type="button"
           onClick={() => onEdit(rule)}
+          aria-label={`Edit quota rule ${rule.description || rule.scopeName || rule.id}`}
           title="Edit"
           className="flex size-8 items-center justify-center rounded-[8px] text-text-muted hover:bg-surface-2 hover:text-text-main"
         >
-          <span className="material-symbols-outlined text-[18px]">edit</span>
+          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">edit</span>
         </button>
         <button
           type="button"
           onClick={() => onDelete(rule)}
+          aria-label={`Delete quota rule ${rule.description || rule.scopeName || rule.id}`}
           title="Delete"
           className="flex size-8 items-center justify-center rounded-[8px] text-text-muted hover:bg-red-500/10 hover:text-red-500"
         >
-          <span className="material-symbols-outlined text-[18px]">delete</span>
+          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">delete</span>
         </button>
       </div>
     </div>
@@ -528,7 +574,7 @@ export default function QuotaRulesManager() {
   const notify = useNotificationStore();
   const modelOptionMap = useMemo(() => {
     const options = getModelOptions(targets);
-    return new Map(options.map((model) => [model.value, model]));
+    return new Map(options.map((model) => [model.key, model]));
   }, [targets]);
 
   const fetchRules = useCallback(async () => {

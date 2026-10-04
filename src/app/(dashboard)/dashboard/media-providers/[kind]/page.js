@@ -9,9 +9,10 @@ import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, getProvidersByKind } from "@/shared
 import AddCompatibleModal from "@/app/(dashboard)/dashboard/providers/components/AddCompatibleModal";
 
 // Kinds that support combos (currently disabled for image/tts — temporarily hidden).
-// webSearch/webFetch handled by /web page.
-const COMBO_KINDS = new Set([]);
-const COMBO_BASE_NAMES = { image: "image-combo", tts: "tts-combo" };
+// webSearch/webFetch handled by /web page. systemOne combos try providers in
+// order on POST /v1/systemone.
+const COMBO_KINDS = new Set(["systemOne"]);
+const COMBO_BASE_NAMES = { image: "image-combo", tts: "tts-combo", systemOne: "systemone-combo" };
 
 function getEffectiveStatus(conn) {
   const isCooldown = Object.entries(conn).some(

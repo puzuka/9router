@@ -10,7 +10,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
-import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
+import { createQuotaContext, enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 // Derived from providers.js: any TTS provider not noAuth requires stored credentials
 const CREDENTIALED_PROVIDERS = new Set(
@@ -48,6 +48,7 @@ export async function handleTts(request) {
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
   const comboModels = await getComboModels(modelStr);
   if (comboModels) {
+    const quotaContext = createQuotaContext(modelStr, {}, modelStr);
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
@@ -55,7 +56,7 @@ export async function handleTts(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelTts(b, m, responseFormat, language, style, { apiKey, endpoint: url.pathname }),
+      handleSingleModel: (b, m) => handleSingleModelTts(b, m, responseFormat, language, style, { apiKey, endpoint: url.pathname, quotaContext }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -66,7 +67,7 @@ export async function handleTts(request) {
   return handleSingleModelTts(body, modelStr, responseFormat, language, style, { apiKey, endpoint: url.pathname });
 }
 
-async function handleSingleModelTts(body, modelStr, responseFormat, language, style, { apiKey, endpoint } = {}) {
+async function handleSingleModelTts(body, modelStr, responseFormat, language, style, { apiKey, endpoint, quotaContext } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -75,7 +76,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
 
   // noAuth providers — no credential needed
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
-    const quota = await enforceQuota({ apiKey, provider, model });
+    const quota = await enforceQuota({ apiKey, provider, model, ...quotaContext });
     if (!quota.allowed) {
       log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
       return quota.response;
@@ -89,6 +90,9 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
         apiKey,
         endpoint,
         cost: 0,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "tts" },
       });
       return result.response;
@@ -115,7 +119,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
     }
 
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
-    const quota = await enforceQuota({ apiKey, provider, model, connectionId: credentials.connectionId });
+    const quota = await enforceQuota({ apiKey, provider, model, connectionId: credentials.connectionId, ...quotaContext });
     if (!quota.allowed) {
       if (shouldFallbackForQuota(quota.violation)) {
         log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
@@ -138,6 +142,9 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
         apiKey,
         endpoint,
         cost: 0,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "tts" },
       });
       return result.response;

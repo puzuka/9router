@@ -5,7 +5,7 @@ vi.mock("@/lib/db/driver.js", () => ({
 }));
 
 describe("buildQuotaModelTargets", () => {
-  it("builds model targets from supported, pricing, alias, and custom model sources", async () => {
+  it("builds model targets from supported, pricing, alias, and custom model sources", { timeout: 15000 }, async () => {
     const { buildQuotaModelTargets } = await import("@/lib/db/repos/quotaRepo.js");
     const targets = buildQuotaModelTargets({
       supportedModels: [

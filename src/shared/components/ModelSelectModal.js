@@ -7,7 +7,7 @@ import ProviderIcon from "./ProviderIcon";
 import CapacityBadges from "./CapacityBadges";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
-import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
+import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isSystemOneCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -79,6 +79,7 @@ export default function ModelSelectModal({
   modelAliases = {},
   kindFilter = null,
   capFilter = null,
+  includeKinds = null,
   addedModelValues = [],
   closeOnSelect = true,
 }) {
@@ -86,6 +87,9 @@ export default function ModelSelectModal({
   const filteredActiveProviders = useMemo(() => {
     if (!kindFilter) return activeProviders;
     return activeProviders.filter((p) => {
+      // System One Compatible nodes connect under the node id, which has no
+      // AI_PROVIDERS entry — admit them directly for the systemOne picker.
+      if (kindFilter === "systemOne" && isSystemOneCompatibleProvider(p.provider)) return true;
       const info = AI_PROVIDERS[p.provider];
       const kinds = info?.serviceKinds || ["llm"];
       return kinds.includes(kindFilter);
@@ -188,7 +192,7 @@ export default function ModelSelectModal({
     const groups = {};
 
     // Kinds where the provider IS the model (no per-model selection needed)
-    const PROVIDER_AS_MODEL_KINDS = new Set(["webSearch", "webFetch"]);
+    const PROVIDER_AS_MODEL_KINDS = new Set(["webSearch", "webFetch", "systemOne"]);
     // Kinds that map directly to model.type field
     const TYPED_KINDS = new Set(["image", "tts", "stt", "embedding", "imageToText"]);
     // For these kinds, providers without hardcoded models can still be picked (provider-as-model fallback)
@@ -198,8 +202,9 @@ export default function ModelSelectModal({
     const filterByKind = (models) => {
       // No kindFilter means the LLM selector. Keep custom models visible because
       // user-added models may have typed capabilities (for example imageToText)
-      // while still being valid chat/combo targets.
-      if (!kindFilter) return models.filter((m) => m.isPlaceholder || m.isCustom || !getModelKind(m) || getModelKind(m) === "llm");
+      // while still being valid chat/combo targets. includeKinds admits extra
+      // model kinds (e.g. "systemOne") as combo targets for callers that opt in.
+      if (!kindFilter) return models.filter((m) => m.isPlaceholder || m.isCustom || !getModelKind(m) || getModelKind(m) === "llm" || includeKinds?.includes(getModelKind(m)));
       if (!TYPED_KINDS.has(kindFilter)) return models;
       return models.filter((m) => m.isPlaceholder || getModelKind(m) === kindFilter);
     };
@@ -230,13 +235,31 @@ export default function ModelSelectModal({
       const providerInfo = allProviders[providerId] || { name: providerId, color: "#666" };
       const isCustomProvider = isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
 
-      // For provider-as-model kinds (webSearch/webFetch): emit a single entry where value === providerId
+      // For provider-as-model kinds (webSearch/webFetch/systemOne): emit a single
+      // entry where value === providerId
       if (kindFilter && PROVIDER_AS_MODEL_KINDS.has(kindFilter)) {
+        const matchedNode = providerNodes.find((node) => node.id === providerId);
+        const displayName = matchedNode?.name || providerInfo.name;
         groups[providerId] = {
-          name: providerInfo.name,
+          name: displayName,
           alias,
-          color: providerInfo.color,
-          models: [{ id: providerId, name: providerInfo.name, value: providerId }],
+          color: matchedNode ? "#2563EB" : providerInfo.color,
+          models: [{ id: matchedNode?.prefix || providerId, name: displayName, value: providerId }],
+        };
+        return;
+      }
+
+      // System One Compatible nodes in the LLM selector: opt-in via includeKinds
+      // (provider IS the model — one chip, value = node id, resolvable by the
+      // /v1/systemone handler through findSystemOneNode).
+      if (!kindFilter && includeKinds?.includes("systemOne") && isSystemOneCompatibleProvider(providerId)) {
+        const matchedNode = providerNodes.find((node) => node.id === providerId);
+        const displayName = matchedNode?.name || providerInfo.name;
+        groups[providerId] = {
+          name: displayName,
+          alias,
+          color: matchedNode ? "#2563EB" : providerInfo.color,
+          models: [{ id: matchedNode?.prefix || providerId, name: displayName, value: providerId }],
         };
         return;
       }
@@ -420,7 +443,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, cursorModels, clineModels, clinepassModels]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, includeKinds, activeProviders, cursorModels, clineModels, clinepassModels]);
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
@@ -652,6 +675,8 @@ ModelSelectModal.propTypes = {
   title: PropTypes.string,
   modelAliases: PropTypes.object,
   kindFilter: PropTypes.string,
+  capFilter: PropTypes.string,
+  includeKinds: PropTypes.arrayOf(PropTypes.string),
   addedModelValues: PropTypes.arrayOf(PropTypes.string),
   closeOnSelect: PropTypes.bool,
 };

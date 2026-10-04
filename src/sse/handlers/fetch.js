@@ -14,7 +14,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
 import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
-import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
+import { createQuotaContext, enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 /**
  * Handle web fetch (URL extraction) request for the SSE/Next.js server.
@@ -93,6 +93,7 @@ export async function handleFetch(request) {
   const combos = await getCombos();
   const comboModels = getComboModelsFromData(providerInput, combos);
   if (comboModels) {
+    const quotaContext = createQuotaContext(providerInput, {}, providerInput);
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
@@ -100,7 +101,7 @@ export async function handleFetch(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleProviderFetch(b, m, request, apiKey, settings),
+      handleSingleModel: (b, m) => handleSingleProviderFetch(b, m, request, apiKey, settings, quotaContext),
       log,
       comboName: providerInput,
       comboStrategy,
@@ -111,7 +112,7 @@ export async function handleFetch(request) {
   return handleSingleProviderFetch(body, providerInput, request, apiKey, settings);
 }
 
-async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings) {
+async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings, quotaContext = null) {
   const targetUrl = body.url;
   const format = body.format;
   const maxCharacters = body.max_characters;
@@ -138,7 +139,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
   // No-auth fetch path (kept for parity though no current fetch provider sets noAuth)
   if (resolvedProvider.noAuth) {
     log.info("AUTH", `\x1b[32m${providerId} no-auth mode\x1b[0m`);
-    const quota = await enforceQuota({ apiKey, provider: providerId });
+    const quota = await enforceQuota({ apiKey, provider: providerId, model: providerId, ...quotaContext });
     if (!quota.allowed) {
       log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
       return quota.response;
@@ -160,6 +161,9 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
         apiKey,
         endpoint: new URL(request.url).pathname,
         usage: result.data?.usage,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "fetch" },
       });
       return new Response(JSON.stringify(result.data), {
@@ -200,7 +204,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
     log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
 
     const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
-    const quota = await enforceQuota({ apiKey, provider: providerId, connectionId: credentials.connectionId });
+    const quota = await enforceQuota({ apiKey, provider: providerId, model: providerId, connectionId: credentials.connectionId, ...quotaContext });
     if (!quota.allowed) {
       if (shouldFallbackForQuota(quota.violation)) {
         log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
@@ -240,6 +244,9 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
         apiKey,
         endpoint: new URL(request.url).pathname,
         usage: result.data?.usage,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "fetch" },
       });
       return new Response(JSON.stringify(result.data), {

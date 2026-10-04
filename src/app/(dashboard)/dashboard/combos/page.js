@@ -846,6 +846,9 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
           modelAliases={modelAliases}
           title="Add Model to Combo"
           kindFilter={kindFilter}
+          // System One models/nodes are valid combo targets on /v1/systemone
+          // (combo lookup there is by name, not kind).
+          includeKinds={["systemOne"]}
           addedModelValues={models}
           closeOnSelect={false}
         />

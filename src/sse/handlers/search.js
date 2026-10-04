@@ -13,7 +13,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
-import { enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
+import { createQuotaContext, enforceQuota, recordSuccessfulUsage, shouldFallbackForQuota } from "../services/quota.js";
 
 /**
  * Handle web search request for the SSE/Next.js server.
@@ -73,6 +73,7 @@ export async function handleSearch(request) {
   const combos = await getCombos();
   const comboModels = getComboModelsFromData(providerInput, combos);
   if (comboModels) {
+    const quotaContext = createQuotaContext(providerInput, {}, providerInput);
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
@@ -80,7 +81,7 @@ export async function handleSearch(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleProviderSearch(b, m, request, apiKey, settings),
+      handleSingleModel: (b, m) => handleSingleProviderSearch(b, m, request, apiKey, settings, quotaContext),
       log,
       comboName: providerInput,
       comboStrategy,
@@ -91,7 +92,7 @@ export async function handleSearch(request) {
   return handleSingleProviderSearch(body, providerInput, request, apiKey, settings);
 }
 
-async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings) {
+async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings, quotaContext = null) {
   const query = body.query;
   const providerId = resolveProviderId(providerInput);
   const resolvedProvider = AI_PROVIDERS[providerId];
@@ -133,7 +134,7 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
   // No-auth providers (e.g. searxng) bypass credential lookup
   if (resolvedProvider.noAuth) {
     log.info("AUTH", `\x1b[32m${providerId} no-auth mode\x1b[0m`);
-    const quota = await enforceQuota({ apiKey, provider: providerId });
+    const quota = await enforceQuota({ apiKey, provider: providerId, model: providerId, ...quotaContext });
     if (!quota.allowed) {
       log.warn("QUOTA", quota.violation?.rule?.description || "Quota exceeded");
       return quota.response;
@@ -153,6 +154,9 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
         apiKey,
         endpoint: new URL(request.url).pathname,
         usage: result.data?.usage,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "search" },
       });
       return result.response;
@@ -211,7 +215,7 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
     log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
 
     const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
-    const quota = await enforceQuota({ apiKey, provider: providerId, connectionId: credentials.connectionId });
+    const quota = await enforceQuota({ apiKey, provider: providerId, model: providerId, connectionId: credentials.connectionId, ...quotaContext });
     if (!quota.allowed) {
       if (shouldFallbackForQuota(quota.violation)) {
         log.warn("QUOTA", `Account ${credentials.connectionName} quota exceeded, trying fallback`);
@@ -252,6 +256,9 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
         apiKey,
         endpoint: new URL(request.url).pathname,
         usage: result.data?.usage,
+        requestedModel: quotaContext?.requestedModel,
+        comboName: quotaContext?.comboName,
+        quotaRequestId: quotaContext?.quotaRequestId,
         meta: { source: "search" },
       });
       return result.response;

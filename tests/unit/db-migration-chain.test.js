@@ -37,6 +37,10 @@ describe("Schema migrations", () => {
       "_meta", "settings", "providerConnections", "providerNodes",
       "proxyPools", "apiKeys", "combos", "kv", "usageHistory", "usageDaily", "requestDetails",
     ]));
+    const usageColumns = db.all(`PRAGMA table_info(usageHistory)`).map((column) => column.name);
+    expect(usageColumns).toEqual(expect.arrayContaining([
+      "requestedModel", "comboName", "quotaRequestId",
+    ]));
   });
 
   it("existing DB at older schemaVersion → re-applies pending migrations on restart", async () => {
@@ -58,6 +62,49 @@ describe("Schema migrations", () => {
 
     const settings = db2.get(`SELECT data FROM settings WHERE id=1`);
     expect(JSON.parse(settings.data)).toEqual({ foo: "bar" });
+  });
+
+  it("real v2 usageHistory upgrade preserves rows and adds attribution columns", async () => {
+    const { ensureDirs, DATA_FILE } = await import("@/lib/db/paths.js");
+    ensureDirs();
+    const seed = await import("@/lib/db/adapters/nodeSqliteAdapter.js");
+    const oldDb = await seed.createNodeSqliteAdapter(DATA_FILE);
+    oldDb.exec(`CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    oldDb.run(`INSERT INTO _meta(key, value) VALUES('schemaVersion', '2')`);
+    oldDb.exec(`CREATE TABLE usageHistory (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
+      connectionId TEXT,
+      apiKey TEXT,
+      endpoint TEXT,
+      promptTokens INTEGER DEFAULT 0,
+      completionTokens INTEGER DEFAULT 0,
+      cost REAL DEFAULT 0,
+      status TEXT,
+      tokens TEXT,
+      meta TEXT
+    )`);
+    oldDb.run(
+      `INSERT INTO usageHistory(timestamp, provider, model, promptTokens, completionTokens, cost, status, tokens, meta)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["2026-09-25T10:00:00.000Z", "openai", "gpt-4o", 7, 3, 0.01, "ok", "{}", "{}"],
+    );
+    oldDb.close();
+
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    const columns = db.all(`PRAGMA table_info(usageHistory)`).map((column) => column.name);
+    expect(columns).toEqual(expect.arrayContaining([
+      "requestedModel", "comboName", "quotaRequestId",
+    ]));
+    const indexes = db.all(`PRAGMA index_list(usageHistory)`).map((index) => index.name);
+    expect(indexes).toEqual(expect.arrayContaining([
+      "idx_uh_requested_model", "idx_uh_combo_name", "idx_uh_quota_request",
+    ]));
+    const row = db.get(`SELECT provider, model, promptTokens, completionTokens, cost FROM usageHistory WHERE id = 1`);
+    expect(row).toMatchObject({ provider: "openai", model: "gpt-4o", promptTokens: 7, completionTokens: 3, cost: 0.01 });
   });
 
   it("fresh DB + legacy db.json → imports data automatically", async () => {

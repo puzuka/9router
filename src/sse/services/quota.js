@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from "uuid";
 import { checkQuota } from "@/lib/localDb";
 import { saveRequestUsage } from "@/lib/usageDb.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -69,6 +70,17 @@ export function shouldFallbackForQuota(violation) {
   return violation?.rule?.scopeType === "providerConnection";
 }
 
+export function createQuotaContext(requestedModel, fields = {}, comboName = "") {
+  const normalizedComboName = comboName ? String(comboName) : null;
+  if (!requestedModel && !normalizedComboName) return { ...fields };
+  return {
+    ...fields,
+    requestedModel: requestedModel ? String(requestedModel) : undefined,
+    comboName: normalizedComboName,
+    quotaRequestId: fields.quotaRequestId || uuidv4(),
+  };
+}
+
 function numberOrNull(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
@@ -129,6 +141,9 @@ export async function recordSuccessfulUsage({
   usage,
   tokens,
   cost,
+  requestedModel,
+  comboName,
+  quotaRequestId,
   meta = {},
 }) {
   const usageData = usage && typeof usage === "object" ? usage : {};
@@ -141,6 +156,9 @@ export async function recordSuccessfulUsage({
     status: "ok",
     tokens: tokens && typeof tokens === "object" ? tokens : normalizeUsageTokens(usageData),
     cost: numberOrNull(cost) ?? normalizeUsageCost(usageData) ?? undefined,
+    requestedModel: requestedModel || undefined,
+    comboName: comboName || undefined,
+    quotaRequestId: quotaRequestId || undefined,
     meta,
   });
 }

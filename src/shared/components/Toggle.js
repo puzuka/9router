@@ -9,6 +9,7 @@ export default function Toggle({
   description,
   disabled = false,
   size = "md",
+  ariaLabel,
   className,
 }) {
   const sizes = {
@@ -33,6 +34,7 @@ export default function Toggle({
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={ariaLabel || label}
         disabled={disabled}
         onClick={handleClick}
         className={cn(

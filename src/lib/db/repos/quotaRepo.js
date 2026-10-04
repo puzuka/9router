@@ -35,7 +35,7 @@ function rowToRule(row) {
     metric: row.metric,
     limitValue: Number(row.limitValue),
     enabled: row.enabled === 1 || row.enabled === true,
-    models: normalizeModelFilter(parseJson(row.models, { mode: "all", include: [], exclude: [] })),
+    models: normalizeModelFilter(parseJson(row.models, { mode: "all", include: [], exclude: [], includeCombos: [], excludeCombos: [] })),
     description: row.description || "",
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -58,12 +58,25 @@ function normalizeModelFilter(value = {}) {
     mode,
     include: normalizeModelList(value.include),
     exclude: normalizeModelList(value.exclude),
+    includeCombos: normalizeModelList(value.includeCombos),
+    excludeCombos: normalizeModelList(value.excludeCombos),
   };
 }
 
-function modelMatchesRule(rule, model) {
+function hasComboFilter(filter) {
+  return (filter.mode === "include" ? filter.includeCombos.length : filter.excludeCombos.length) > 0;
+}
+
+function modelMatchesRule(rule, model, comboName) {
   const filter = normalizeModelFilter(rule.models);
   if (filter.mode === "all") return true;
+
+  const normalizedComboName = normalizeModelId(comboName);
+  if (normalizedComboName) {
+    if (filter.mode === "include" && filter.includeCombos.includes(normalizedComboName)) return true;
+    if (filter.mode === "exclude" && filter.excludeCombos.includes(normalizedComboName)) return false;
+  }
+
   const normalizedModel = normalizeModelId(model);
   if (!normalizedModel) return false;
   if (filter.mode === "include") return filter.include.includes(normalizedModel);
@@ -131,12 +144,32 @@ function buildUsageWhere(rule, apiKeyValue, now = new Date(), options = {}) {
 
   const filter = normalizeModelFilter(rule.models);
   if (filter.mode === "include") {
-    if (filter.include.length === 0) return null;
-    where.push(`model IN (${filter.include.map(() => "?").join(", ")})`);
-    params.push(...filter.include);
-  } else if (filter.mode === "exclude" && filter.exclude.length > 0) {
-    where.push(`(model IS NULL OR model NOT IN (${filter.exclude.map(() => "?").join(", ")}))`);
-    params.push(...filter.exclude);
+    if (filter.include.length === 0 && filter.includeCombos.length === 0) return null;
+    const modelPredicate = filter.include.length > 0
+      ? `model IN (${filter.include.map(() => "?").join(", ")})`
+      : null;
+    const comboPredicate = filter.includeCombos.length > 0
+      ? `comboName IN (${filter.includeCombos.map(() => "?").join(", ")})`
+      : null;
+    if (modelPredicate && comboPredicate) {
+      where.push(`(${modelPredicate} OR ${comboPredicate})`);
+      params.push(...filter.include, ...filter.includeCombos);
+    } else if (comboPredicate) {
+      where.push(comboPredicate);
+      params.push(...filter.includeCombos);
+    } else {
+      where.push(modelPredicate);
+      params.push(...filter.include);
+    }
+  } else if (filter.mode === "exclude") {
+    if (filter.exclude.length > 0) {
+      where.push(`(model IS NULL OR model NOT IN (${filter.exclude.map(() => "?").join(", ")}))`);
+      params.push(...filter.exclude);
+    }
+    if (filter.excludeCombos.length > 0) {
+      where.push(`(comboName IS NULL OR comboName NOT IN (${filter.excludeCombos.map(() => "?").join(", ")}))`);
+      params.push(...filter.excludeCombos);
+    }
   }
 
   return { where: where.join(" AND "), params };
@@ -308,6 +341,10 @@ export async function getQuotaUsage(rule, options = {}) {
   const db = await getAdapter();
   const now = options.now || new Date();
   const where = buildUsageWhere(normalizedRule, apiKeyValue, now, options);
+  if (where && normalizedRule.metric === "requests" && hasComboFilter(normalizeModelFilter(normalizedRule.models)) && options.excludeQuotaRequestId) {
+    where.where += " AND (quotaRequestId IS NULL OR quotaRequestId != ?)";
+    where.params.push(options.excludeQuotaRequestId);
+  }
   if (!where) {
     return {
       used: 0,
@@ -321,10 +358,11 @@ export async function getQuotaUsage(rule, options = {}) {
   }
 
   const rows = db.all(
-    `SELECT promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE ${where.where}`,
+    `SELECT id, promptTokens, completionTokens, cost, tokens, quotaRequestId FROM usageHistory WHERE ${where.where}`,
     where.params,
   );
 
+  const logicalRequestIds = new Set();
   let promptTokens = 0;
   let completionTokens = 0;
   let totalTokens = 0;
@@ -338,10 +376,11 @@ export async function getQuotaUsage(rule, options = {}) {
     completionTokens += completion;
     totalTokens += rawTotal > 0 ? rawTotal : prompt + completion;
     cost += Number(row.cost || 0);
+    logicalRequestIds.add(row.quotaRequestId || `row:${row.id}`);
   }
 
   const usage = {
-    requests: rows.length,
+    requests: logicalRequestIds.size,
     promptTokens,
     completionTokens,
     totalTokens,
@@ -353,12 +392,13 @@ export async function getQuotaUsage(rule, options = {}) {
 }
 
 export async function getQuotaTargets() {
-  const [apiKeys, connections, pricing, aliases, customModels] = await Promise.all([
+  const [apiKeys, connections, pricing, aliases, customModels, combos] = await Promise.all([
     import("./apiKeysRepo.js").then((m) => m.getApiKeys()).catch(() => []),
     import("./connectionsRepo.js").then((m) => m.getProviderConnections()).catch(() => []),
     import("./pricingRepo.js").then((m) => m.getPricing()).catch(() => ({})),
     import("./aliasRepo.js").then((m) => m.getModelAliases()).catch(() => ({})),
     import("./aliasRepo.js").then((m) => m.getCustomModels()).catch(() => []),
+    import("./combosRepo.js").then((m) => m.getCombos()).catch(() => []),
   ]);
   const providers = [...new Set(connections.map((conn) => conn.provider).filter(Boolean))].sort();
 
@@ -366,6 +406,12 @@ export async function getQuotaTargets() {
     apiKeys: apiKeys.map((key) => ({ id: key.id, name: key.name || key.id, isActive: key.isActive })),
     providers: providers.map((id) => ({ id, name: id })),
     models: buildQuotaModelTargets({ pricing, aliases, customModels }),
+    combos: combos.map((combo) => ({
+      id: combo.name,
+      name: combo.name,
+      kind: combo.kind || null,
+      models: Array.isArray(combo.models) ? combo.models : [],
+    })),
     providerConnections: connections.map((conn) => ({
       id: conn.id,
       provider: conn.provider,
@@ -400,9 +446,10 @@ export async function checkQuota(context = {}) {
 
   for (const row of rows) {
     const rule = rowToRule(row);
-    if (!modelMatchesRule(rule, context.model)) continue;
+    if (!modelMatchesRule(rule, context.model, context.comboName)) continue;
     const usage = await getQuotaUsage(rule, {
       apiKeyValue: rule.scopeType === "apiKey" ? context.apiKey : null,
+      excludeQuotaRequestId: context.quotaRequestId,
     });
     if (usage.used >= rule.limitValue) {
       return {

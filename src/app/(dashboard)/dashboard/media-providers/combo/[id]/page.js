@@ -22,6 +22,7 @@ const KIND_LABELS = {
   webFetch: "Web Fetch",
   image: "Text to Image",
   tts: "Text To Speech",
+  systemOne: "System One",
 };
 
 const EXAMPLE_PATHS = {
@@ -29,6 +30,7 @@ const EXAMPLE_PATHS = {
   webFetch: "/v1/web/fetch",
   image: "/v1/images/generations",
   tts: "/v1/audio/speech",
+  systemOne: "/v1/systemone",
 };
 
 const EXAMPLE_BODIES = {
@@ -36,6 +38,24 @@ const EXAMPLE_BODIES = {
   webFetch: (n) => ({ model: n, url: "https://example.com", format: "markdown" }),
   image: (n) => ({ model: n, prompt: "A cute cat playing piano", n: 1, size: "1024x1024" }),
   tts: (n) => ({ model: n, input: "Hello, this is a test.", voice: "alloy" }),
+  systemOne: (n) => ({
+    model: n,
+    state: {
+      task: "Review a proposed change before a human decides whether to merge it.",
+      diff_summary: "Reject an empty project name before writing a record.",
+      test_summary: "The new empty-name test and existing creation tests pass. No integration tests were run.",
+    },
+    questions: {
+      review: {
+        type: "choice",
+        instructions: "Does the supplied evidence support accepting this change, or does it need further review? Treat missing evidence as a reason to review.",
+        criteria: {
+          accept: "The described change meets the task and the supplied tests cover its relevant behavior.",
+          review: "Evidence is missing, the tests are insufficient, or the change may be incorrect.",
+        },
+      },
+    },
+  }),
 };
 
 // Map combo.kind → listing route to go back to
